@@ -31,7 +31,6 @@ TIMEOUT = int(os.environ.get("BOOT_TIMEOUT", "20"))
 EXPECTED = [
     "S1:LBA",
     "[InitraOS] kernel entry, serial online",
-    "[InitraOS] kernel entry, serial online",
     "[InitraOS] CPU vendor:",
     "[InitraOS] IDT loaded",
     "[InitraOS] PIC remapped, PIT armed",
