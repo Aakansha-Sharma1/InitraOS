@@ -9,6 +9,9 @@
 # Linux and the CI runner.
 
 NASM       ?= nasm
+CC         ?= gcc
+LD         ?= ld
+OBJCOPY    ?= objcopy
 PYTHON     ?= python3
 QEMU       ?= qemu-system-i386
 BUILD      := build
@@ -24,13 +27,29 @@ $(BUILD):
 $(BUILD)/stage2.bin: stage2.asm gdt.inc a20.inc | $(BUILD)
 	$(NASM) -f bin $(NASMFLAGS) stage2.asm -o $@
 
-$(BUILD)/kernel.bin: kernel.asm idt.inc serial.inc | $(BUILD)
-	$(NASM) -f bin $(NASMFLAGS) kernel.asm -o $@
+# Compile the C kernel source as freestanding 32-bit code.
+$(BUILD)/kernel.c.o: kernel.c | $(BUILD)
+	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -fno-unwind-tables \
+		-c kernel.c -o $@
 
-# boot.bin must be assembled AFTER stage2 and kernel, because the number of
-# sectors it loads is derived from their actual sizes.
+# Assemble the low-level kernel entry/ISR code as ELF32.
+$(BUILD)/kernel.asm.o: kernel.asm idt.inc serial.inc | $(BUILD)
+	$(NASM) -f elf32 $(NASMFLAGS) kernel.asm -o $@
+
+# Link the C and assembly objects into an ELF kernel.
+$(BUILD)/kernel.elf: $(BUILD)/kernel.asm.o $(BUILD)/kernel.c.o linker.ld
+	$(LD) -m elf_i386 -T linker.ld -o $@ \
+		$(BUILD)/kernel.asm.o $(BUILD)/kernel.c.o
+
+# Convert the linked ELF kernel into the flat binary loaded by stage2.
+$(BUILD)/kernel.bin: $(BUILD)/kernel.elf
+	$(OBJCOPY) -O binary $< $@
+
+# boot.bin must be assembled AFTER stage2 and kernel,
+# because the number of sectors it loads is derived from their actual sizes.
 $(BUILD)/boot.bin: boot.asm $(BUILD)/stage2.bin $(BUILD)/kernel.bin
-	$(NASM) -f bin boot.asm -o $@ \
+	$(NASM) -f bin $(NASMFLAGS) boot.asm -o $@ \
 		-DLOAD_SECTORS=$$($(PYTHON) tools/mkimage.py --sectors-only)
 
 $(BUILD)/disk.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin
@@ -46,4 +65,4 @@ test:
 	$(PYTHON) tools/boottest.py
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf build
