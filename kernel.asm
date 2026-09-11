@@ -1,9 +1,17 @@
 bits 32
-org 0x8800
+
+; %define (not equ) so that idt.inc's %ifndef guard can see it
+%define KERNEL_ORG 0x8800
+org KERNEL_ORG
 
 global kernel_start
 
 kernel_start:
+
+    call serial_init
+
+    mov esi, s_banner
+    call serial_print
 
     mov edi, 0xB8000
     mov ecx, 80 * 25
@@ -104,12 +112,28 @@ clear_screen:
     mov eax, [cpu_model]
     call print_hex
 
+    ; mirror CPU identification to the serial port
+    mov esi, s_cpu
+    call serial_print
+    mov esi, cpu_vendor
+    call serial_print
+    call serial_newline
+
+    mov esi, s_cpuid
+    call serial_print
+    mov eax, [cpu_raw]
+    call serial_print_hex
+    call serial_newline
+
 
     ; -----------------------------------------
     ; Load IDT
     ; -----------------------------------------
 
     lidt [idt_descriptor]
+
+    mov esi, s_idt
+    call serial_print
 
 
     ; -----------------------------------------
@@ -151,6 +175,9 @@ clear_screen:
     mov al, 0xFE
     out 0x21, al
 
+    mov esi, s_pic
+    call serial_print
+
 
     ; -----------------------------------------
     ; Test Interrupt 0
@@ -166,6 +193,17 @@ clear_screen:
     mov edi, 0xB8640
     mov esi, info_mode
     call print_string
+
+    mov esi, s_iret
+    call serial_print
+
+
+    ; -----------------------------------------
+    ; Boot complete - CI asserts on this marker
+    ; -----------------------------------------
+
+    mov esi, s_bootok
+    call serial_print
 
 
     ; -----------------------------------------
@@ -188,6 +226,9 @@ isr0:
     mov edi, 0xB85A0
     mov esi, interrupt_message
     call print_string
+
+    mov esi, s_int0
+    call serial_print
 
     iret
 
@@ -299,6 +340,20 @@ timer_message db 'TIMER TICKS: ', 0
 
 
 ; -----------------------------------------
+; Serial log messages
+; -----------------------------------------
+
+s_banner db 13, 10, '[InitraOS] kernel entry, serial online', 13, 10, 0
+s_cpu    db '[InitraOS] CPU vendor: ', 0
+s_cpuid  db '[InitraOS] CPUID EAX: 0x', 0
+s_idt    db '[InitraOS] IDT loaded', 13, 10, 0
+s_pic    db '[InitraOS] PIC remapped, PIT armed', 13, 10, 0
+s_int0   db '[InitraOS] INT0 handler reached', 13, 10, 0
+s_iret   db '[InitraOS] IRET returned to kernel', 13, 10, 0
+s_bootok db '[InitraOS] BOOT_OK', 13, 10, 0
+
+
+; -----------------------------------------
 ; Variables
 ; -----------------------------------------
 
@@ -316,7 +371,8 @@ timer_ticks dd 0
 
 
 ; -----------------------------------------
-; IDT
+; Includes
 ; -----------------------------------------
 
+%include "serial.inc"
 %include "idt.inc"

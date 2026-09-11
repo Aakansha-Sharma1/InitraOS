@@ -1,8 +1,14 @@
-check.log
-kernel.lst
-qemu_cpu.log
-qemu_extract.log
-boot_backup.asm
-stage2_backup.asm
+# build output
+build/
+*.bin
+disk.img
 
-tools/
+# local toolchains live in tools/ - keep only the build scripts
+tools/*
+!tools/mkimage.py
+!tools/boottest.py
+
+# logs and scratch
+*.log
+*.lst
+*_backup.asm

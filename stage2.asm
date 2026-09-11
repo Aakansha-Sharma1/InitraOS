@@ -10,6 +10,11 @@ start:
     mov si, message
     call print_string
 
+%ifdef AUTOBOOT
+    ; CI build: skip the interactive shell and go straight to the kernel
+    jmp enter_protected_mode
+%endif
+
     mov si, prompt
     call print_string
 
@@ -222,6 +227,16 @@ print_string:
 enter_protected_mode:
     cli
 
+    call enable_a20
+    jnc .a20_ok
+
+    mov si, a20_error
+    call print_string
+.a20_hang:
+    hlt
+    jmp .a20_hang
+
+.a20_ok:
     lgdt [gdt_descriptor]
 
     mov eax, cr0
@@ -278,6 +293,7 @@ prompt db 'INITRA> ', 0
 help_message db 'Commands: help, clear, version, echo, sysinfo, pmode', 13, 10, 0
 version_message db 'InitraOS v0.1', 13, 10, 0
 unknown_message db 'Unknown command', 13, 10, 0
+a20_error db 'FATAL: could not enable A20 gate', 13, 10, 0
 newline_message db 13, 10, 0
 
 sysinfo_message db 'InitraOS v0.1', 13, 10
@@ -290,5 +306,6 @@ pmode_message db 'INITRA OS - 32-bit Protected Mode: OK', 0
 buffer times 64 db 0
 
 %include "gdt.inc"
+%include "a20.inc"
 
 times 2048-($-$$) db 0

@@ -1,0 +1,40 @@
+name: build and boot
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  boot-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm qemu-system-x86
+
+      - name: Show versions
+        run: |
+          nasm -v
+          qemu-system-i386 --version | head -1
+
+      - name: Build disk image
+        run: make
+
+      - name: Boot in QEMU and check serial output
+        run: make test
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: initraos-build
+          path: |
+            build/disk.img
+            build/serial.log
+          if-no-files-found: warn
