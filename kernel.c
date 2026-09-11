@@ -3,6 +3,12 @@
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static int keyboard_index = 0;
 
+static int keyboard_column = 0;
+static int keyboard_row = 13;
+
+static int shift_pressed = 0;
+
+
 void kernel_main(void)
 {
     volatile unsigned short *vga = (unsigned short *)0xB8000;
@@ -26,53 +32,168 @@ void kernel_main(void)
     vga[pos + 14] = 0x0745;   // E
 }
 
+
 void keyboard_handle(unsigned char scancode)
 {
     volatile unsigned short *vga = (unsigned short *)0xB8000;
 
     char c = 0;
 
+
+    /*
+     * -----------------------------------------
+     * Shift key
+     * -----------------------------------------
+     *
+     * Left Shift  = 0x2A
+     * Right Shift = 0x36
+     *
+     * Key release adds 0x80:
+     *
+     * Left Shift release  = 0xAA
+     * Right Shift release = 0xB6
+     */
+
+    if (scancode == 0x2A || scancode == 0x36)
+    {
+        shift_pressed = 1;
+        return;
+    }
+
+    if (scancode == 0xAA || scancode == 0xB6)
+    {
+        shift_pressed = 0;
+        return;
+    }
+
+
+    /*
+     * -----------------------------------------
+     * Backspace
+     * -----------------------------------------
+     */
+
+    if (scancode == 0x0E)
+    {
+        if (keyboard_column > 0 && keyboard_index > 0)
+        {
+            keyboard_column--;
+            keyboard_index--;
+
+            int pos = keyboard_row * 80 + keyboard_column;
+
+            keyboard_buffer[keyboard_index] = 0;
+
+            vga[pos] = 0x0720;
+        }
+
+        return;
+    }
+
+
+    /*
+     * -----------------------------------------
+     * Enter
+     * -----------------------------------------
+     */
+
+    if (scancode == 0x1C)
+    {
+        keyboard_row++;
+        keyboard_column = 0;
+
+        /*
+         * Input starts from row 13.
+         * Keep it inside the 25-row VGA screen.
+         */
+        if (keyboard_row >= 25)
+        {
+            keyboard_row = 13;
+        }
+
+        return;
+    }
+
+
+    /*
+     * -----------------------------------------
+     * Convert keyboard scancode to lowercase
+     * characters.
+     * -----------------------------------------
+     */
+
     switch (scancode)
     {
-        case 0x10: c = 'Q'; break;
-        case 0x11: c = 'W'; break;
-        case 0x12: c = 'E'; break;
-        case 0x13: c = 'R'; break;
-        case 0x14: c = 'T'; break;
-        case 0x15: c = 'Y'; break;
-        case 0x16: c = 'U'; break;
-        case 0x17: c = 'I'; break;
-        case 0x18: c = 'O'; break;
-        case 0x19: c = 'P'; break;
+        /* QWERTY row */
 
-        case 0x1E: c = 'A'; break;
-        case 0x1F: c = 'S'; break;
-        case 0x20: c = 'D'; break;
-        case 0x21: c = 'F'; break;
-        case 0x22: c = 'G'; break;
-        case 0x23: c = 'H'; break;
-        case 0x24: c = 'J'; break;
-        case 0x25: c = 'K'; break;
-        case 0x26: c = 'L'; break;
+        case 0x10: c = 'q'; break;
+        case 0x11: c = 'w'; break;
+        case 0x12: c = 'e'; break;
+        case 0x13: c = 'r'; break;
+        case 0x14: c = 't'; break;
+        case 0x15: c = 'y'; break;
+        case 0x16: c = 'u'; break;
+        case 0x17: c = 'i'; break;
+        case 0x18: c = 'o'; break;
+        case 0x19: c = 'p'; break;
 
-        case 0x2C: c = 'Z'; break;
-        case 0x2D: c = 'X'; break;
-        case 0x2E: c = 'C'; break;
-        case 0x2F: c = 'V'; break;
-        case 0x30: c = 'B'; break;
-        case 0x31: c = 'N'; break;
-        case 0x32: c = 'M'; break;
+        /* ASDF row */
+
+        case 0x1E: c = 'a'; break;
+        case 0x1F: c = 's'; break;
+        case 0x20: c = 'd'; break;
+        case 0x21: c = 'f'; break;
+        case 0x22: c = 'g'; break;
+        case 0x23: c = 'h'; break;
+        case 0x24: c = 'j'; break;
+        case 0x25: c = 'k'; break;
+        case 0x26: c = 'l'; break;
+
+        /* ZXCV row */
+
+        case 0x2C: c = 'z'; break;
+        case 0x2D: c = 'x'; break;
+        case 0x2E: c = 'c'; break;
+        case 0x2F: c = 'v'; break;
+        case 0x30: c = 'b'; break;
+        case 0x31: c = 'n'; break;
+        case 0x32: c = 'm'; break;
+
+        /* Space */
 
         case 0x39: c = ' '; break;
     }
 
-    if (c != 0 && keyboard_index < KEYBOARD_BUFFER_SIZE - 1)
+
+    /*
+     * -----------------------------------------
+     * Apply Shift
+     * -----------------------------------------
+     */
+
+    if (shift_pressed && c >= 'a' && c <= 'z')
+    {
+        c = c - 'a' + 'A';
+    }
+
+
+    /*
+     * -----------------------------------------
+     * Store character and display it
+     * -----------------------------------------
+     */
+
+    if (c != 0 &&
+        keyboard_index < KEYBOARD_BUFFER_SIZE - 1 &&
+        keyboard_column < 80)
     {
         keyboard_buffer[keyboard_index] = c;
         keyboard_index++;
 
-        int pos = (13 * 80) + keyboard_index - 1;
+        int pos = keyboard_row * 80 + keyboard_column;
 
         vga[pos] = 0x0700 | c;
+
+        keyboard_column++;
     }
 }
