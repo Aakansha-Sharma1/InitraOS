@@ -37,7 +37,7 @@ $(BUILD)/disk.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel.bin
 	$(PYTHON) tools/mkimage.py
 
 run: all
-	$(QEMU) -drive file=$(BUILD)/disk.img,format=raw,if=floppy \
+	$(QEMU) -drive file=$(BUILD)/disk.img,format=raw,if=ide \
 		-serial stdio -no-reboot
 
 test:

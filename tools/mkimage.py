@@ -2,7 +2,7 @@
 """
 InitraOS disk image builder.
 
-Assembles boot.bin + stage2.bin + kernel.bin into a 1.44MB floppy image and,
+Assembles boot.bin + stage2.bin + kernel.bin into a hard disk image and,
 critically, refuses to produce an image where the kernel would be silently
 truncated by the bootloader.
 
@@ -22,10 +22,16 @@ import os
 import sys
 
 SECTOR_SIZE = 512
-FLOPPY_SIZE = 1474560           # 1.44MB
+DISK_SIZE = 16 * 1024 * 1024    # 16MB hard disk image
 LOAD_BASE = 0x8000              # where stage2 is loaded
 STAGE2_MAX = 2048               # stage2.bin is padded to this
-SECTORS_PER_TRACK = 18          # BIOS CHS geometry limit per track
+
+# The loader reads into real-mode conventional memory starting at LOAD_BASE,
+# advancing the destination segment once per sector. 0x80000 is a deliberately
+# conservative ceiling: the real barrier is the EBDA near 0x9FC00, and we stay
+# well clear of it.
+LOAD_CEILING = 0x80000
+MAX_LOAD_SECTORS = (LOAD_CEILING - LOAD_BASE) // SECTOR_SIZE
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -79,11 +85,12 @@ def main():
             f"constant changed)"
         )
 
-    if need > SECTORS_PER_TRACK - 1:
+    if need > MAX_LOAD_SECTORS:
         errors.append(
-            f"kernel needs {need} sectors, but the bootloader's CHS read "
-            f"starts at LBA 1 and a 1.44MB floppy track holds only "
-            f"{SECTORS_PER_TRACK}. Move to a real ELF loader (Phase 1)."
+            f"stage2+kernel need {need} sectors ({need * SECTOR_SIZE} bytes), "
+            f"which would load past 0x{LOAD_CEILING:X} in real mode. The "
+            f"ceiling is {MAX_LOAD_SECTORS} sectors. Load the kernel into "
+            f"extended memory after the switch to protected mode."
         )
 
     if errors:
@@ -95,7 +102,7 @@ def main():
         sys.exit(1)
 
     # ---- assemble ----------------------------------------------------
-    image = bytearray(FLOPPY_SIZE)
+    image = bytearray(DISK_SIZE)
     image[0:len(boot)] = boot
     image[SECTOR_SIZE:SECTOR_SIZE + len(stage2)] = stage2
     kernel_off = SECTOR_SIZE + len(stage2)
@@ -120,6 +127,7 @@ def main():
     print(f"  used         {used:>6} bytes")
     print(f"  headroom     {window - used:>6} bytes")
     print(f"  kernel limit {window - s2_len:>6} bytes before truncation")
+    print(f"  load ceiling {MAX_LOAD_SECTORS:>6} sectors (0x{LOAD_CEILING:X})")
     print(f"  -> {out}")
     print("-" * 62)
 

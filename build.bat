@@ -55,7 +55,7 @@ if errorlevel 1 goto :fail
 
 if /i "%1"=="run" (
     echo Booting in QEMU...
-    "%QEMU%" -drive file=build\disk.img,format=raw,if=floppy -serial stdio -no-reboot
+    "%QEMU%" -drive file=build\disk.img,format=raw,if=ide -serial stdio -no-reboot
 )
 
 goto :eof

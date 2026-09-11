@@ -22,8 +22,15 @@ LOG = os.path.join(BUILD, "serial.log")
 QEMU = os.environ.get("QEMU", "qemu-system-i386")
 TIMEOUT = int(os.environ.get("BOOT_TIMEOUT", "20"))
 
-# Markers the kernel must emit, in this order.
+# Markers that must appear on the serial port, in this order.
+# "S1:LBA" comes from stage 1 and asserts that the INT 13h extended read
+# path was actually taken. If the BIOS reported no EDD support the loader
+# emits "S1:CHS" instead and this test fails, which is deliberate: a silent
+# downgrade to the untested fallback path is something we want to be told
+# about rather than discover later.
 EXPECTED = [
+    "S1:LBA",
+    "[InitraOS] kernel entry, serial online",
     "[InitraOS] kernel entry, serial online",
     "[InitraOS] CPU vendor:",
     "[InitraOS] IDT loaded",
@@ -43,7 +50,7 @@ def main():
 
     cmd = [
         QEMU,
-        "-drive", f"file={IMAGE},format=raw,if=floppy",
+        "-drive", f"file={IMAGE},format=raw,if=ide",
         "-serial", f"file:{LOG}",
         "-display", "none",
         "-no-reboot",
