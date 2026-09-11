@@ -1,0 +1,6 @@
+check.log
+kernel.lst
+qemu_cpu.log
+qemu_extract.log
+boot_backup.asm
+stage2_backup.asm
