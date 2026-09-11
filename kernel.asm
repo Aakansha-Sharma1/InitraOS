@@ -1,10 +1,8 @@
 bits 32
 
-; %define (not equ) so that idt.inc's %ifndef guard can see it
-%define KERNEL_ORG 0x8800
-org KERNEL_ORG
-
 global kernel_start
+extern kernel_main
+extern keyboard_handle
 
 kernel_start:
 
@@ -126,6 +124,37 @@ clear_screen:
     call serial_newline
 
 
+        ; -----------------------------------------
+    ; Initialize IDT gates
+    ; -----------------------------------------
+
+    ; Vector 0 -> isr0
+    mov eax, isr0
+    mov word [idt_start + 0], ax
+    mov word [idt_start + 2], 0x08
+    mov byte [idt_start + 4], 0
+    mov byte [idt_start + 5], 0x8E
+    shr eax, 16
+    mov word [idt_start + 6], ax
+
+    ; Vector 32 -> isr_timer
+    mov eax, isr_timer
+    mov word [idt_start + 32 * 8 + 0], ax
+    mov word [idt_start + 32 * 8 + 2], 0x08
+    mov byte [idt_start + 32 * 8 + 4], 0
+    mov byte [idt_start + 32 * 8 + 5], 0x8E
+    shr eax, 16
+    mov word [idt_start + 32 * 8 + 6], ax
+
+; Vector 33 -> keyboard IRQ1
+mov eax, isr_keyboard
+mov word [idt_start + 33 * 8 + 0], ax
+mov word [idt_start + 33 * 8 + 2], 0x08
+mov byte [idt_start + 33 * 8 + 4], 0
+mov byte [idt_start + 33 * 8 + 5], 0x8E
+shr eax, 16
+mov word [idt_start + 33 * 8 + 6], ax
+
     ; -----------------------------------------
     ; Load IDT
     ; -----------------------------------------
@@ -172,7 +201,7 @@ clear_screen:
     mov al, 0x01
     out 0x21, al
     out 0xA1, al
-    mov al, 0xFE
+    mov al, 0xFC
     out 0x21, al
 
     mov esi, s_pic
@@ -205,6 +234,11 @@ clear_screen:
     mov esi, s_bootok
     call serial_print
 
+; -----------------------------------------
+; Enter C kernel
+; -----------------------------------------
+
+call kernel_main
 
     ; -----------------------------------------
     ; Halt kernel
@@ -255,6 +289,28 @@ isr_timer:
     popad
     iret
 
+; -----------------------------------------
+; Keyboard IRQ1 Handler
+; -----------------------------------------
+
+isr_keyboard:
+    pushad
+
+    ; Read keyboard scancode
+    in al, 0x60
+    movzx eax, al
+
+    ; Pass scancode to C
+    push eax
+    call keyboard_handle
+    add esp, 4
+
+    ; Send EOI to master PIC
+    mov al, 0x20
+    out 0x20, al
+
+    popad
+    iret
 
 ; -----------------------------------------
 ; Print String
