@@ -36,6 +36,21 @@ static void *heap_alloc(unsigned int size)
     {
         if (current->free == 1 && current->size >= size)
         {
+            if (current->size >= size + sizeof(heap_block_t) + 1)
+            {
+                heap_block_t *new_block =
+                    (heap_block_t *)((unsigned int)(current + 1) + size);
+
+                new_block->size =
+                    current->size - size - sizeof(heap_block_t);
+
+                new_block->free = 1;
+                new_block->next = current->next;
+
+                current->size = size;
+                current->next = new_block;
+            }
+
             current->free = 0;
             return (void *)(current + 1);
         }
