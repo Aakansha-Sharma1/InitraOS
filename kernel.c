@@ -29,6 +29,9 @@ static void *heap_alloc(unsigned int size)
         return 0;
     }
 
+    /* Align allocation size to 4 bytes */
+    size = (size + 3) & ~3;
+    
     /* Look for a previously freed block */
     heap_block_t *current = heap_first_block;
 
