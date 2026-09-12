@@ -111,6 +111,16 @@ static void heap_free(void *address)
         if ((void *)(current + 1) == address)
         {
             current->free = 1;
+
+            /* Merge with the next block if it is also free */
+            if (current->next != 0 && current->next->free == 1)
+            {
+                current->size +=
+                    sizeof(heap_block_t) + current->next->size;
+
+                current->next = current->next->next;
+            }
+
             return;
         }
 
@@ -278,7 +288,6 @@ void kernel_main(void)
 
     shell_prompt();
 }
-
 
 /* ---------- Keyboard Handler ---------- */
 
