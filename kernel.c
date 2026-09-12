@@ -1,7 +1,110 @@
 #define KEYBOARD_BUFFER_SIZE 128
 
-/* CPU vendor string comes from kernel.asm */
 extern char cpu_vendor[13];
+extern char __kernel_end;
+
+/* ---------- Heap ---------- */
+
+typedef struct heap_block
+{
+    unsigned int size;
+    unsigned int free;
+    struct heap_block *next;
+} heap_block_t;
+
+static unsigned int heap_pointer = 0;
+static unsigned int heap_limit = 0x80000;
+
+static heap_block_t *heap_first_block = 0;
+
+static unsigned int align_up_4k(unsigned int address)
+{
+    return (address + 0xFFF) & ~0xFFF;
+}
+
+static void *heap_alloc(unsigned int size)
+{
+    if (size == 0)
+    {
+        return 0;
+    }
+
+    /* Look for a previously freed block */
+    heap_block_t *current = heap_first_block;
+
+    while (current != 0)
+    {
+        if (current->free == 1 && current->size >= size)
+        {
+            current->free = 0;
+            return (void *)(current + 1);
+        }
+
+        current = current->next;
+    }
+
+    /* No suitable free block found, allocate new memory */
+    if (heap_pointer > heap_limit ||
+        heap_limit - heap_pointer < sizeof(heap_block_t) ||
+        size > (heap_limit - heap_pointer) - sizeof(heap_block_t))
+    {
+        return 0;
+    }
+
+    heap_block_t *block = (heap_block_t *)heap_pointer;
+
+    block->size = size;
+    block->free = 0;
+    block->next = 0;
+
+    if (heap_first_block == 0)
+    {
+        heap_first_block = block;
+    }
+    else
+    {
+        current = heap_first_block;
+
+        while (current->next != 0)
+        {
+            current = current->next;
+        }
+
+        current->next = block;
+    }
+
+    heap_pointer += sizeof(heap_block_t);
+
+    unsigned int address = heap_pointer;
+
+    heap_pointer += size;
+
+    return (void *)address;
+}
+
+static void heap_free(void *address)
+{
+    if (address == 0)
+    {
+        return;
+    }
+
+    heap_block_t *current = heap_first_block;
+
+    while (current != 0)
+    {
+        if ((void *)(current + 1) == address)
+        {
+            current->free = 1;
+            return;
+        }
+
+        current = current->next;
+    }
+}
+
+
+/* ---------- Keyboard ---------- */
 
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static int keyboard_index = 0;
@@ -16,7 +119,8 @@ static int shift_pressed = 0;
 
 static void print_at(int row, int column, const char *text)
 {
-    volatile unsigned short *vga = (unsigned short *)0xB8000;
+    volatile unsigned short *vga =
+        (unsigned short *)0xB8000;
 
     while (*text != 0 && column < 80)
     {
@@ -34,7 +138,8 @@ static void print_at(int row, int column, const char *text)
 
 static void clear_screen(void)
 {
-    volatile unsigned short *vga = (unsigned short *)0xB8000;
+    volatile unsigned short *vga =
+        (unsigned short *)0xB8000;
 
     for (int i = 0; i < 80 * 25; i++)
     {
@@ -77,8 +182,6 @@ static void shell_prompt(void)
 
 static void shell_execute(void)
 {
-    /* ---------- clear ---------- */
-
     if (command_equals("clear"))
     {
         clear_screen();
@@ -90,9 +193,6 @@ static void shell_execute(void)
 
         return;
     }
-
-
-    /* ---------- cpu ---------- */
 
     if (command_equals("cpu"))
     {
@@ -115,9 +215,6 @@ static void shell_execute(void)
         return;
     }
 
-
-    /* ---------- help ---------- */
-
     if (command_equals("help"))
     {
         keyboard_row++;
@@ -138,10 +235,6 @@ static void shell_execute(void)
 
         keyboard_row++;
     }
-
-
-    /* ---------- Unknown command ---------- */
-
     else if (keyboard_index > 0)
     {
         keyboard_row++;
@@ -150,9 +243,6 @@ static void shell_execute(void)
 
         keyboard_row++;
     }
-
-
-    /* ---------- Reset command ---------- */
 
     keyboard_index = 0;
 
@@ -169,6 +259,8 @@ static void shell_execute(void)
 
 void kernel_main(void)
 {
+    heap_pointer = align_up_4k((unsigned int)&__kernel_end);
+
     shell_prompt();
 }
 
@@ -177,41 +269,38 @@ void kernel_main(void)
 
 void keyboard_handle(unsigned char scancode)
 {
-    volatile unsigned short *vga = (unsigned short *)0xB8000;
+    volatile unsigned short *vga =
+        (unsigned short *)0xB8000;
 
     char c = 0;
 
-
-    /* ---------- Shift Press ---------- */
-
+    /* Left Shift / Right Shift press */
     if (scancode == 0x2A || scancode == 0x36)
     {
         shift_pressed = 1;
         return;
     }
 
-
-    /* ---------- Shift Release ---------- */
-
+    /* Left Shift / Right Shift release */
     if (scancode == 0xAA || scancode == 0xB6)
     {
         shift_pressed = 0;
         return;
     }
 
-
-    /* ---------- Backspace ---------- */
-
+    /* Backspace */
     if (scancode == 0x0E)
     {
-        if (keyboard_column > 10 && keyboard_index > 0)
+        if (keyboard_column > 10 &&
+            keyboard_index > 0)
         {
             keyboard_column--;
             keyboard_index--;
 
             keyboard_buffer[keyboard_index] = 0;
 
-            int pos = keyboard_row * 80 + keyboard_column;
+            int pos =
+                keyboard_row * 80 + keyboard_column;
 
             vga[pos] = 0x0720;
         }
@@ -219,9 +308,7 @@ void keyboard_handle(unsigned char scancode)
         return;
     }
 
-
-    /* ---------- Enter ---------- */
-
+    /* Enter */
     if (scancode == 0x1C)
     {
         keyboard_buffer[keyboard_index] = 0;
@@ -231,13 +318,10 @@ void keyboard_handle(unsigned char scancode)
         return;
     }
 
-
-    /* ---------- Keyboard Mapping ---------- */
+    /* Keyboard scan codes */
 
     switch (scancode)
     {
-        /* QWERTY row */
-
         case 0x10: c = 'q'; break;
         case 0x11: c = 'w'; break;
         case 0x12: c = 'e'; break;
@@ -249,8 +333,6 @@ void keyboard_handle(unsigned char scancode)
         case 0x18: c = 'o'; break;
         case 0x19: c = 'p'; break;
 
-        /* ASDF row */
-
         case 0x1E: c = 'a'; break;
         case 0x1F: c = 's'; break;
         case 0x20: c = 'd'; break;
@@ -261,8 +343,6 @@ void keyboard_handle(unsigned char scancode)
         case 0x25: c = 'k'; break;
         case 0x26: c = 'l'; break;
 
-        /* ZXCV row */
-
         case 0x2C: c = 'z'; break;
         case 0x2D: c = 'x'; break;
         case 0x2E: c = 'c'; break;
@@ -271,22 +351,18 @@ void keyboard_handle(unsigned char scancode)
         case 0x31: c = 'n'; break;
         case 0x32: c = 'm'; break;
 
-        /* Space */
-
         case 0x39: c = ' '; break;
     }
 
-
-    /* ---------- Shift + Letter = Uppercase ---------- */
-
-    if (shift_pressed && c >= 'a' && c <= 'z')
+    /* Shift + lowercase letter */
+    if (shift_pressed &&
+        c >= 'a' &&
+        c <= 'z')
     {
         c = c - 'a' + 'A';
     }
 
-
-    /* ---------- Store Character ---------- */
-
+    /* Add character to keyboard buffer */
     if (c != 0 &&
         keyboard_index < KEYBOARD_BUFFER_SIZE - 1 &&
         keyboard_column < 80)
@@ -295,7 +371,8 @@ void keyboard_handle(unsigned char scancode)
 
         keyboard_index++;
 
-        int pos = keyboard_row * 80 + keyboard_column;
+        int pos =
+            keyboard_row * 80 + keyboard_column;
 
         vga[pos] = 0x0700 | c;
 
