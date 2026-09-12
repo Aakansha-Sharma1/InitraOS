@@ -121,13 +121,29 @@ static void heap_free(void *address)
                 current->next = current->next->next;
             }
 
+            /* Find the previous block */
+            heap_block_t *previous = heap_first_block;
+
+            while (previous != 0 && previous->next != current)
+            {
+                previous = previous->next;
+            }
+
+            /* Merge with the previous block if it is also free */
+            if (previous != 0 && previous->free == 1)
+            {
+                previous->size +=
+                    sizeof(heap_block_t) + current->size;
+
+                previous->next = current->next;
+            }
+
             return;
         }
 
         current = current->next;
     }
 }
-
 
 /* ---------- Keyboard ---------- */
 
