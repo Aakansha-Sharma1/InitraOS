@@ -1,5 +1,8 @@
 #define KEYBOARD_BUFFER_SIZE 128
 
+/* CPU vendor string comes from kernel.asm */
+extern char cpu_vendor[13];
+
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static int keyboard_index = 0;
 
@@ -9,29 +12,168 @@ static int keyboard_row = 13;
 static int shift_pressed = 0;
 
 
-void kernel_main(void)
+/* ---------- VGA Output ---------- */
+
+static void print_at(int row, int column, const char *text)
 {
     volatile unsigned short *vga = (unsigned short *)0xB8000;
 
-    int pos = 11 * 80;
+    while (*text != 0 && column < 80)
+    {
+        int pos = row * 80 + column;
 
-    vga[pos + 0]  = 0x0743;   // C
-    vga[pos + 1]  = 0x0720;   // space
-    vga[pos + 2]  = 0x074B;   // K
-    vga[pos + 3]  = 0x0745;   // E
-    vga[pos + 4]  = 0x0752;   // R
-    vga[pos + 5]  = 0x074E;   // N
-    vga[pos + 6]  = 0x0745;   // E
-    vga[pos + 7]  = 0x074C;   // L
-    vga[pos + 8]  = 0x0720;   // space
-    vga[pos + 9]  = 0x0741;   // A
-    vga[pos + 10] = 0x0743;   // C
-    vga[pos + 11] = 0x0754;   // T
-    vga[pos + 12] = 0x0749;   // I
-    vga[pos + 13] = 0x0756;   // V
-    vga[pos + 14] = 0x0745;   // E
+        vga[pos] = 0x0700 | *text;
+
+        column++;
+        text++;
+    }
 }
 
+
+/* ---------- Clear Screen ---------- */
+
+static void clear_screen(void)
+{
+    volatile unsigned short *vga = (unsigned short *)0xB8000;
+
+    for (int i = 0; i < 80 * 25; i++)
+    {
+        vga[i] = 0x0720;
+    }
+}
+
+
+/* ---------- Command Comparison ---------- */
+
+static int command_equals(const char *command)
+{
+    int i = 0;
+
+    while (command[i] != 0)
+    {
+        if (keyboard_buffer[i] != command[i])
+        {
+            return 0;
+        }
+
+        i++;
+    }
+
+    return keyboard_index == i;
+}
+
+
+/* ---------- Shell Prompt ---------- */
+
+static void shell_prompt(void)
+{
+    print_at(keyboard_row, 0, "InitraOS> ");
+
+    keyboard_column = 10;
+}
+
+
+/* ---------- Shell ---------- */
+
+static void shell_execute(void)
+{
+    /* ---------- clear ---------- */
+
+    if (command_equals("clear"))
+    {
+        clear_screen();
+
+        keyboard_index = 0;
+        keyboard_row = 13;
+
+        shell_prompt();
+
+        return;
+    }
+
+
+    /* ---------- cpu ---------- */
+
+    if (command_equals("cpu"))
+    {
+        keyboard_row++;
+
+        print_at(keyboard_row, 0, "CPU: ");
+        print_at(keyboard_row, 5, cpu_vendor);
+
+        keyboard_row++;
+
+        keyboard_index = 0;
+
+        if (keyboard_row >= 25)
+        {
+            keyboard_row = 13;
+        }
+
+        shell_prompt();
+
+        return;
+    }
+
+
+    /* ---------- help ---------- */
+
+    if (command_equals("help"))
+    {
+        keyboard_row++;
+
+        print_at(keyboard_row, 0, "Commands:");
+
+        keyboard_row++;
+        print_at(keyboard_row, 0, "help");
+
+        keyboard_row++;
+        print_at(keyboard_row, 0, "clear");
+
+        keyboard_row++;
+        print_at(keyboard_row, 0, "cpu");
+
+        keyboard_row++;
+        print_at(keyboard_row, 0, "about");
+
+        keyboard_row++;
+    }
+
+
+    /* ---------- Unknown command ---------- */
+
+    else if (keyboard_index > 0)
+    {
+        keyboard_row++;
+
+        print_at(keyboard_row, 0, "Unknown command");
+
+        keyboard_row++;
+    }
+
+
+    /* ---------- Reset command ---------- */
+
+    keyboard_index = 0;
+
+    if (keyboard_row >= 25)
+    {
+        keyboard_row = 13;
+    }
+
+    shell_prompt();
+}
+
+
+/* ---------- Kernel Main ---------- */
+
+void kernel_main(void)
+{
+    shell_prompt();
+}
+
+
+/* ---------- Keyboard Handler ---------- */
 
 void keyboard_handle(unsigned char scancode)
 {
@@ -40,25 +182,16 @@ void keyboard_handle(unsigned char scancode)
     char c = 0;
 
 
-    /*
-     * -----------------------------------------
-     * Shift key
-     * -----------------------------------------
-     *
-     * Left Shift  = 0x2A
-     * Right Shift = 0x36
-     *
-     * Key release adds 0x80:
-     *
-     * Left Shift release  = 0xAA
-     * Right Shift release = 0xB6
-     */
+    /* ---------- Shift Press ---------- */
 
     if (scancode == 0x2A || scancode == 0x36)
     {
         shift_pressed = 1;
         return;
     }
+
+
+    /* ---------- Shift Release ---------- */
 
     if (scancode == 0xAA || scancode == 0xB6)
     {
@@ -67,22 +200,18 @@ void keyboard_handle(unsigned char scancode)
     }
 
 
-    /*
-     * -----------------------------------------
-     * Backspace
-     * -----------------------------------------
-     */
+    /* ---------- Backspace ---------- */
 
     if (scancode == 0x0E)
     {
-        if (keyboard_column > 0 && keyboard_index > 0)
+        if (keyboard_column > 10 && keyboard_index > 0)
         {
             keyboard_column--;
             keyboard_index--;
 
-            int pos = keyboard_row * 80 + keyboard_column;
-
             keyboard_buffer[keyboard_index] = 0;
+
+            int pos = keyboard_row * 80 + keyboard_column;
 
             vga[pos] = 0x0720;
         }
@@ -91,36 +220,19 @@ void keyboard_handle(unsigned char scancode)
     }
 
 
-    /*
-     * -----------------------------------------
-     * Enter
-     * -----------------------------------------
-     */
+    /* ---------- Enter ---------- */
 
     if (scancode == 0x1C)
     {
-        keyboard_row++;
-        keyboard_column = 0;
+        keyboard_buffer[keyboard_index] = 0;
 
-        /*
-         * Input starts from row 13.
-         * Keep it inside the 25-row VGA screen.
-         */
-        if (keyboard_row >= 25)
-        {
-            keyboard_row = 13;
-        }
+        shell_execute();
 
         return;
     }
 
 
-    /*
-     * -----------------------------------------
-     * Convert keyboard scancode to lowercase
-     * characters.
-     * -----------------------------------------
-     */
+    /* ---------- Keyboard Mapping ---------- */
 
     switch (scancode)
     {
@@ -165,11 +277,7 @@ void keyboard_handle(unsigned char scancode)
     }
 
 
-    /*
-     * -----------------------------------------
-     * Apply Shift
-     * -----------------------------------------
-     */
+    /* ---------- Shift + Letter = Uppercase ---------- */
 
     if (shift_pressed && c >= 'a' && c <= 'z')
     {
@@ -177,17 +285,14 @@ void keyboard_handle(unsigned char scancode)
     }
 
 
-    /*
-     * -----------------------------------------
-     * Store character and display it
-     * -----------------------------------------
-     */
+    /* ---------- Store Character ---------- */
 
     if (c != 0 &&
         keyboard_index < KEYBOARD_BUFFER_SIZE - 1 &&
         keyboard_column < 80)
     {
         keyboard_buffer[keyboard_index] = c;
+
         keyboard_index++;
 
         int pos = keyboard_row * 80 + keyboard_column;

@@ -412,7 +412,7 @@ s_bootok db '[InitraOS] BOOT_OK', 13, 10, 0
 ; -----------------------------------------
 ; Variables
 ; -----------------------------------------
-
+global cpu_vendor
 cpu_vendor times 13 db 0
 
 cpuid_max_leaf dd 0
