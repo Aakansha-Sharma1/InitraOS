@@ -113,6 +113,12 @@ static void heap_free(void *address)
     {
         if ((void *)(current + 1) == address)
         {
+            /* Prevent double free */
+            if (current->free == 1)
+            {
+                return;
+            }
+
             current->free = 1;
 
             /* Merge with the next block if it is also free */
