@@ -1,5 +1,5 @@
 bits 32
-
+%define KERNEL_ORG 0x8800
 global kernel_start
 extern kernel_main
 extern keyboard_handle
