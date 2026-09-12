@@ -154,6 +154,62 @@ static void heap_free(void *address)
     }
 }
 
+static void *heap_realloc(void *address, unsigned int size)
+{
+    if (address == 0)
+    {
+        return heap_alloc(size);
+    }
+
+    if (size == 0)
+    {
+        heap_free(address);
+        return 0;
+    }
+
+    heap_block_t *current = heap_first_block;
+
+    while (current != 0)
+    {
+        if ((void *)(current + 1) == address)
+        {
+            /* Existing block is already large enough */
+            if (current->size >= size)
+            {
+                return address;
+            }
+
+            /* Allocate a new larger block */
+            void *new_address = heap_alloc(size);
+
+            if (new_address == 0)
+            {
+                return 0;
+            }
+
+            /* Copy the old contents */
+            unsigned char *source =
+                (unsigned char *)address;
+
+            unsigned char *destination =
+                (unsigned char *)new_address;
+
+            for (unsigned int i = 0; i < current->size; i++)
+            {
+                destination[i] = source[i];
+            }
+
+            heap_free(address);
+
+            return new_address;
+        }
+
+        current = current->next;
+    }
+
+    return 0;
+}
+
 /* ---------- Keyboard ---------- */
 
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
