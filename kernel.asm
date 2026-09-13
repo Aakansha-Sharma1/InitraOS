@@ -6,6 +6,7 @@ global kernel_start
 global task_switch
 global c_print_string
 
+extern scheduler_tick
 extern kernel_main
 extern keyboard_handle
 
@@ -496,13 +497,16 @@ isr_timer:
     mov eax, [timer_ticks]
     call print_hex
 
+    ; Give the scheduler a chance on every timer tick.
+    call scheduler_tick
+
+    ; End of timer interrupt.
     mov al, 0x20
     out 0x20, al
 
     popad
 
     iret
-
 
 ; =========================================================
 ; Keyboard IRQ1 Handler

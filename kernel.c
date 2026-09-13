@@ -248,6 +248,7 @@ typedef struct task_context
 
 extern void task_switch(task_context_t *old_context,
                         task_context_t *new_context);
+extern void scheduler_tick(void);
 
 static unsigned int next_task_id = 1;
 
@@ -342,6 +343,30 @@ static task_t *task_schedule_next(void)
     } while (task != start);
 
     return 0;
+}
+
+void scheduler_tick(void)
+{
+    task_t *next_task;
+
+    if (current_task == 0)
+    {
+        return;
+    }
+
+    next_task = task_schedule_next();
+
+    if (next_task == 0 ||
+        next_task == current_task)
+    {
+        return;
+    }
+
+    current_task->state = TASK_READY;
+
+    next_task->state = TASK_RUNNING;
+
+    current_task = next_task;
 }
 
 /* ---------- Task Test ---------- */
