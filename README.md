@@ -6,7 +6,7 @@ InitraOS is developed step-by-step, with each feature implemented, tested, and t
 
 ---
 
-## Current Status
+## 🚀 Current Status
 
 **Current implementation:** Milestone 05 — Kernel Memory Management
 
@@ -96,3 +96,247 @@ version
 echo
 sysinfo
 pmode
+````
+
+### Kernel Memory Management
+
+* Kernel heap region
+* Heap block metadata
+* Dynamic heap allocation
+* Free-block reuse
+* Safe memory freeing
+* Heap block splitting
+* Two-sided heap coalescing
+* Heap bounds protection
+* Allocation-size alignment
+* Double-free protection
+* `realloc` support
+* Heap integrity validation
+
+---
+
+## Architecture
+
+```text
+BIOS
+ │
+ ▼
+Boot Sector
+ │
+ ├── INT 13h disk loading
+ ├── LBA support
+ └── CHS fallback
+ │
+ ▼
+Stage 2 Bootloader
+ │
+ ├── A20
+ ├── GDT
+ └── Protected Mode
+ │
+ ▼
+32-bit Kernel
+ │
+ ├── VGA
+ ├── Serial Debugging
+ ├── IDT
+ ├── CPU Exceptions
+ ├── PIC / IRQ
+ ├── PIT Timer
+ ├── Keyboard
+ ├── Shell
+ └── Kernel Heap
+ │
+ ▼
+Process & Task Management
+        │
+        ▼
+   User Space
+        │
+        ▼
+ System Calls
+        │
+        ▼
+ Filesystem
+        │
+        ▼
+ Graphical Environment
+```
+
+The architecture will evolve as new kernel and user-space components are implemented.
+
+---
+
+## Memory Layout
+
+```text
+0x0000 ─────────────────────
+        BIOS / Low Memory
+
+0x7C00
+        Bootloader
+        │
+0x8000
+        Stage 2
+        │
+0x8800
+        Kernel
+        │
+        Kernel Heap
+        │
+0x80000 ────────────────────
+        Current load ceiling
+```
+
+The memory layout will evolve as paging, physical memory management, and 64-bit support are introduced.
+
+---
+
+## Technologies
+
+* **C**
+* **x86 Assembly**
+* **NASM**
+* **GCC**
+* **GNU Make**
+* **QEMU**
+* **Git & GitHub**
+* **GitHub Actions**
+
+---
+
+## Building
+
+### Linux / WSL
+
+Install the required tools:
+
+```bash
+sudo apt install gcc make nasm qemu-system-x86
+```
+
+Build:
+
+```bash
+make
+```
+
+Run in QEMU:
+
+```bash
+make run
+```
+
+Run tests:
+
+```bash
+make test
+```
+
+Clean build files:
+
+```bash
+make clean
+```
+
+### Windows
+
+The project also provides:
+
+```text
+build.bat
+```
+
+The Windows build uses NASM, Python, and QEMU.
+
+---
+
+## Testing
+
+InitraOS is tested primarily through QEMU.
+
+The project also uses GitHub Actions to automatically build and boot-test the operating system.
+
+CI verifies that the kernel reaches the expected boot state before a change is considered successful.
+
+---
+
+## Project Structure
+
+```text
+InitraOS/
+│
+├── .github/
+│   └── workflows/
+│
+├── tools/
+│   └── mkimage.py
+│
+├── boot.asm
+├── stage2.asm
+├── kernel.asm
+├── kernel.c
+│
+├── gdt.inc
+├── a20.inc
+├── idt.inc
+├── serial.inc
+│
+├── linker.ld
+├── Makefile
+├── build.bat
+├── OS_DEV_STATE.md
+└── README.md
+```
+
+---
+
+## Long-Term Goal
+
+The long-term goal of InitraOS is to build a complete modern operating system from the ground up.
+
+The project will progressively move from the current 32-bit kernel toward:
+
+* Multitasking
+* Process isolation
+* Virtual memory
+* Physical memory management
+* 64-bit architecture
+* User-space programs
+* System calls
+* Filesystem support
+* Networking
+* User environment
+* Graphical desktop environment
+
+The focus is not only on making the OS work, but on understanding how each layer is implemented.
+
+---
+
+## Development Philosophy
+
+InitraOS follows a simple development approach:
+
+```text
+Plan
+ ↓
+Implement
+ ↓
+Test
+ ↓
+Document
+ ↓
+Commit
+ ↓
+Move to the next feature
+```
+
+Every major feature is tracked through GitHub Issues and Milestones to maintain a clear development history.
+
+---
+
+## License
+
+This project is currently developed as a personal learning and systems-programming project.
+
+```
