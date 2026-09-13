@@ -2,6 +2,10 @@ bits 32
 
 %define KERNEL_ORG 0x8800
 
+; CPU privilege levels
+%define KERNEL_RING 0
+%define USER_RING   3
+
 global kernel_start
 global task_switch
 global c_print_string
