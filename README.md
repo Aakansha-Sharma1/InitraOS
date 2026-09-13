@@ -1,87 +1,98 @@
 # InitraOS
 
-A 32-bit x86 operating system built from scratch in NASM assembly.
+A from-scratch operating system built to understand how an operating system works internally, starting from BIOS boot and gradually progressing toward a complete 64-bit OS.
 
-Current state: a two-stage bootloader, a 16-bit real-mode shell, and a
-protected-mode kernel with GDT, IDT, PIC remapping, a PIT timer and serial
-debug output. See `INITRAOS_ROADMAP.md` for where this is going.
+InitraOS is developed step-by-step, with each feature implemented, tested, and tracked through GitHub Issues and Milestones.
 
-## Building
+---
 
-### Windows (native)
+## Current Status
 
-Requires `nasm.exe` and `python` on PATH.
+**Current implementation:** Milestone 05 — Kernel Memory Management
 
-```bat
-build.bat            :: build build\disk.img
-build.bat run        :: build and boot in QEMU
-build.bat clean      :: remove build artifacts
-```
+**Next:** Milestone 06 — Process & Task Management
 
-If NASM is not on PATH: `set NASM=C:\path\to\nasm.exe`
+### Completed Milestones
 
-### Linux / WSL / CI
+- ✅ 01 — Boot & Hardware Initialization
+- ✅ 02 — Kernel Foundation
+- ✅ 03 — Interrupts & Hardware Handling
+- ✅ 04 — Kernel Input & Shell
+- ✅ 05 — Kernel Memory Management
 
-```sh
-make                 # build build/disk.img
-make run             # build and boot in QEMU (interactive)
-make test            # build an autoboot image and assert on serial output
-make clean
-```
+### Upcoming
 
-## Running
+- ⬜ 06 — Process & Task Management
+- ⬜ 07 — Process Isolation & Privilege
+- ⬜ 08 — Virtual Memory & Paging
+- ⬜ 09 — Physical Memory Manager
+- ⬜ 10 — Transition to 64-bit Architecture
+- ⬜ 11 — 64-bit Kernel Core
+- ⬜ 12 — Advanced Memory Management
+- ⬜ 13 — Process & User-Space Architecture
+- ⬜ 14 — System Calls
+- ⬜ 15 — Executable & User Program Support
+- ⬜ 16 — Filesystem
+- ⬜ 17 — Device & Hardware Abstraction
+- ⬜ 18 — Networking
+- ⬜ 19 — User Environment
+- ⬜ 20 — Graphical Environment
+- ⬜ 21 — OS Hardening & Reliability
+- ⬜ 22 — Testing & CI
+- ⬜ 23 — Final InitraOS Architecture
 
-```sh
-qemu-system-i386 -drive file=build/disk.img,format=raw,if=floppy -serial stdio
-```
+---
 
-Serial output goes to your terminal. This is the primary debugging channel —
-`serial_print` in the kernel writes to COM1.
+## What Has Been Implemented
 
-## Shell commands
+### Boot & Hardware Initialization
 
-At the `INITRA>` prompt: `help`, `clear`, `version`, `echo <text>`, `sysinfo`,
-`pmode` (switches to 32-bit protected mode and enters the kernel).
+- BIOS boot sector
+- Two-stage bootloader
+- Disk loading using INT 13h
+- LBA disk reads
+- CHS fallback
+- A20 line enabling
+- Global Descriptor Table (GDT)
+- 32-bit Protected Mode
+- Kernel handoff
 
-## Layout
+### Kernel Foundation
 
-| File | Purpose |
-|---|---|
-| `boot.asm` | Stage 1 bootloader (512 bytes). Loads stage2 + kernel sector by sector with retries. |
-| `stage2.asm` | 16-bit real-mode shell. Enables A20 and switches to protected mode. |
-| `kernel.asm` | 32-bit kernel: CPUID, IDT, PIC remap, PIT, ISRs. |
-| `gdt.inc` | Flat 4 GB code/data descriptors. |
-| `idt.inc` | 256-entry IDT with a 32-bit-safe gate macro. |
-| `a20.inc` | A20 gate enable (BIOS, fast A20, keyboard controller fallback). |
-| `serial.inc` | COM1 driver for debug output. |
-| `tools/mkimage.py` | Builds `disk.img` and refuses to produce a truncated kernel. |
-| `tools/boottest.py` | Boots the image in QEMU and asserts on serial markers. |
+- 32-bit kernel entry point
+- VGA text output
+- Serial debugging
+- CPU identification using CPUID
+- Kernel memory layout
+- Kernel build and linking
+- Kernel initialization sequence
+- QEMU boot verification
 
-## Memory map (current)
+### Interrupts & Hardware
 
-```
-0x07C00   stage 1 bootloader
-0x08000   stage 2 (2048 bytes, fixed)
-0x08800   kernel
-0x90000   protected-mode stack
-0xB8000   VGA text buffer
-```
+- Interrupt Descriptor Table (IDT)
+- CPU exception handling
+- Software interrupts
+- 8259 PIC initialization
+- Hardware IRQ handling
+- PIT timer initialization
+- Timer interrupt testing
 
-The bootloader loads a computed number of sectors into the window at
-`0x8000`. `tools/mkimage.py` derives that count from the actual binary sizes
-and fails the build if the kernel would not fit — a silent truncation here
-produces a hang with no error message, so the guard is deliberate.
+### Kernel Input & Shell
 
-## Continuous integration
+- PS/2 keyboard input
+- Keyboard input buffer
+- Backspace handling
+- Enter / command-line input
+- Shift and lowercase input
+- Basic kernel command shell
 
-`.github/workflows/ci.yml` builds the image and boots it in real QEMU on every
-push, asserting that the kernel reaches `BOOT_OK` on the serial port. The disk
-image and serial log are uploaded as build artifacts.
+Available shell commands include:
 
-## Notes
-
-- The kernel currently reports the CPU base model only; extended model bits
-  are not yet decoded, so a Haswell reports `0x0C` rather than `0x3C`.
-  Fixed in Phase 1.
-- Only vectors 0 and 32 have handlers. The rest are non-present.
-- There is no memory manager, filesystem, or user mode yet.
+```text
+help
+clear
+version
+echo
+sysinfo
+pmode
