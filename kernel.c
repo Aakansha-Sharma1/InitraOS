@@ -216,6 +216,8 @@ static void *heap_realloc(void *address, unsigned int size)
 
 /* ---------- Tasks ---------- */
 
+/* ---------- Tasks ---------- */
+
 #define TASK_READY    0
 #define TASK_RUNNING  1
 #define TASK_BLOCKED  2
@@ -250,13 +252,15 @@ extern void task_switch(task_context_t *old_context,
 static unsigned int next_task_id = 1;
 
 static task_t *current_task = 0;
+static task_t *task_list = 0;
 
 static task_context_t kernel_context;
 static task_context_t test_context;
 
 static task_t *task_create(void)
 {
-    task_t *task = (task_t *)heap_alloc(sizeof(task_t));
+    task_t *task =
+        (task_t *)heap_alloc(sizeof(task_t));
 
     if (task == 0)
     {
@@ -268,6 +272,25 @@ static task_t *task_create(void)
     task->esp = 0;
     task->ebp = 0;
     task->next = 0;
+
+    /*
+     * Add the new task to the scheduler list.
+     */
+    if (task_list == 0)
+    {
+        task_list = task;
+    }
+    else
+    {
+        task_t *current = task_list;
+
+        while (current->next != 0)
+        {
+            current = current->next;
+        }
+
+        current->next = task;
+    }
 
     return task;
 }
@@ -282,7 +305,46 @@ static void task_set_state(task_t *task, unsigned int state)
     task->state = state;
 }
 
-/* ---------- Test Task ---------- */
+/*
+ * Select the next READY task using round-robin order.
+ */
+static task_t *task_schedule_next(void)
+{
+    if (task_list == 0)
+    {
+        return 0;
+    }
+
+    task_t *start = task_list;
+
+    if (current_task != 0 &&
+        current_task->next != 0)
+    {
+        start = current_task->next;
+    }
+
+    task_t *task = start;
+
+    do
+    {
+        if (task->state == TASK_READY)
+        {
+            return task;
+        }
+
+        task = task->next;
+
+        if (task == 0)
+        {
+            task = task_list;
+        }
+
+    } while (task != start);
+
+    return 0;
+}
+
+/* ---------- Task Test ---------- */
 
 static unsigned char task_test_stack[4096];
 
@@ -482,22 +544,28 @@ static void shell_execute(void)
 void kernel_main(void)
 {
         __asm__ volatile ("sti");
-        
+
     heap_pointer =
         align_up_4k((unsigned int)&__kernel_end);
 
     /*
      * Create the first task.
      */
-    current_task = task_create();
+   current_task = task_create();
 
-    if (current_task == 0)
-    {
-        shell_prompt();
-        return;
-    }
+if (current_task == 0)
+{
+    shell_prompt();
+    return;
+}
 
+task_t *next_task = task_schedule_next();
+
+if (next_task != 0)
+{
+    current_task = next_task;
     current_task->state = TASK_RUNNING;
+}
 
     /*
      * Build the initial task context.
