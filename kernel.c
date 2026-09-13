@@ -1,5 +1,10 @@
 #define KEYBOARD_BUFFER_SIZE 128
 
+#define TASK_READY     0
+#define TASK_RUNNING   1
+#define TASK_BLOCKED   2
+#define TASK_FINISHED  3
+
 extern char cpu_vendor[13];
 extern char __kernel_end;
 extern void c_print_string(const char *message);
@@ -214,14 +219,10 @@ static void *heap_realloc(void *address, unsigned int size)
     return 0;
 }
 
-/* ---------- Tasks ---------- */
+/* ---------- Process Address Space ---------- */
 
-/* ---------- Tasks ---------- */
-
-#define TASK_READY    0
-#define TASK_RUNNING  1
-#define TASK_BLOCKED  2
-#define TASK_FINISHED 3
+#define PROCESS_SPACE_START 0x00100000
+#define PROCESS_SPACE_END   0x00800000
 
 typedef struct task
 {
