@@ -1,5 +1,7 @@
 # InitraOS
 
+[![Build](https://github.com/Aakansha-Sharma1/InitraOS/actions/workflows/ci.yml/badge.svg)](https://github.com/Aakansha-Sharma1/InitraOS/actions/workflows/ci.yml)
+
 A from-scratch operating system built to understand how an operating system works internally, starting from BIOS boot and gradually progressing toward a complete 64-bit OS.
 
 InitraOS is developed step-by-step, with each feature implemented, tested, and tracked through GitHub Issues and Milestones.
