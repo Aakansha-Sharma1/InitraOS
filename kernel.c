@@ -210,6 +210,66 @@ static void *heap_realloc(void *address, unsigned int size)
     return 0;
 }
 
+/* ---------- Tasks ---------- */
+
+#define TASK_READY    0
+#define TASK_RUNNING  1
+#define TASK_BLOCKED  2
+#define TASK_FINISHED 3
+
+typedef struct task
+{
+    unsigned int id;
+    unsigned int state;
+    unsigned int esp;
+    unsigned int ebp;
+    struct task *next;
+} task_t;
+
+typedef struct task_context
+{
+    unsigned int eax;
+    unsigned int ebx;
+    unsigned int ecx;
+    unsigned int edx;
+    unsigned int esi;
+    unsigned int edi;
+    unsigned int ebp;
+    unsigned int esp;
+    unsigned int eip;
+    unsigned int eflags;
+} task_context_t;
+
+static unsigned int next_task_id = 1;
+
+static task_t *task_create(void)
+{
+    task_t *task = (task_t *)heap_alloc(sizeof(task_t));
+
+    if (task == 0)
+    {
+        return 0;
+    }
+
+    task->id = next_task_id++;
+    task->state = TASK_READY;
+    task->esp = 0;
+    task->ebp = 0;
+    task->next = 0;
+
+    return task;
+}
+
+static void task_set_state(task_t *task, unsigned int state)
+{
+    if (task == 0)
+    {
+        return;
+    }
+
+    task->state = state;
+}
+
 /* ---------- Keyboard ---------- */
 
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
