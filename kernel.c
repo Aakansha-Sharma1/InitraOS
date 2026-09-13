@@ -2,6 +2,7 @@
 
 extern char cpu_vendor[13];
 extern char __kernel_end;
+extern void c_print_string(const char *message);
 
 /* ---------- Heap ---------- */
 
@@ -31,7 +32,7 @@ static void *heap_alloc(unsigned int size)
 
     /* Align allocation size to 4 bytes */
     size = (size + 3) & ~3;
-    
+
     /* Look for a previously freed block */
     heap_block_t *current = heap_first_block;
 
@@ -167,6 +168,9 @@ static void *heap_realloc(void *address, unsigned int size)
         return 0;
     }
 
+    /* Keep allocation alignment consistent with heap_alloc */
+    size = (size + 3) & ~3;
+
     heap_block_t *current = heap_first_block;
 
     while (current != 0)
@@ -240,7 +244,15 @@ typedef struct task_context
     unsigned int eflags;
 } task_context_t;
 
+extern void task_switch(task_context_t *old_context,
+                        task_context_t *new_context);
+
 static unsigned int next_task_id = 1;
+
+static task_t *current_task = 0;
+
+static task_context_t kernel_context;
+static task_context_t test_context;
 
 static task_t *task_create(void)
 {
@@ -270,6 +282,40 @@ static void task_set_state(task_t *task, unsigned int state)
     task->state = state;
 }
 
+/* ---------- Test Task ---------- */
+
+static unsigned char task_test_stack[4096];
+
+static void task_exit(void)
+{
+    if (current_task != 0)
+    {
+        task_set_state(current_task, TASK_FINISHED);
+    }
+
+    task_switch(&test_context, &kernel_context);
+
+    while (1)
+    {
+        __asm__ volatile ("hlt");
+    }
+}
+
+static void task_test_function(void)
+{
+    volatile unsigned short *vga =
+        (volatile unsigned short *)0xB8700;
+
+    const char *message = "TASK SWITCH WORKED!";
+
+    for (unsigned int i = 0; message[i] != 0; i++)
+    {
+        vga[i] = 0x0700 | message[i];
+    }
+
+    task_exit();
+}
+
 /* ---------- Keyboard ---------- */
 
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
@@ -279,7 +325,6 @@ static int keyboard_column = 0;
 static int keyboard_row = 13;
 
 static int shift_pressed = 0;
-
 
 /* ---------- VGA Output ---------- */
 
@@ -299,7 +344,6 @@ static void print_at(int row, int column, const char *text)
     }
 }
 
-
 /* ---------- Clear Screen ---------- */
 
 static void clear_screen(void)
@@ -312,7 +356,6 @@ static void clear_screen(void)
         vga[i] = 0x0720;
     }
 }
-
 
 /* ---------- Command Comparison ---------- */
 
@@ -333,7 +376,6 @@ static int command_equals(const char *command)
     return keyboard_index == i;
 }
 
-
 /* ---------- Shell Prompt ---------- */
 
 static void shell_prompt(void)
@@ -342,7 +384,6 @@ static void shell_prompt(void)
 
     keyboard_column = 10;
 }
-
 
 /* ---------- Shell ---------- */
 
@@ -401,11 +442,27 @@ static void shell_execute(void)
 
         keyboard_row++;
     }
+    else if (command_equals("about"))
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "InitraOS - custom 32-bit operating system"
+        );
+
+        keyboard_row++;
+    }
     else if (keyboard_index > 0)
     {
         keyboard_row++;
 
-        print_at(keyboard_row, 0, "Unknown command");
+        print_at(
+            keyboard_row,
+            0,
+            "Unknown command"
+        );
 
         keyboard_row++;
     }
@@ -420,14 +477,95 @@ static void shell_execute(void)
     shell_prompt();
 }
 
-
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
 {
-    heap_pointer = align_up_4k((unsigned int)&__kernel_end);
+        __asm__ volatile ("sti");
+        
+    heap_pointer =
+        align_up_4k((unsigned int)&__kernel_end);
+
+    /*
+     * Create the first task.
+     */
+    current_task = task_create();
+
+    if (current_task == 0)
+    {
+        shell_prompt();
+        return;
+    }
+
+    current_task->state = TASK_RUNNING;
+
+    /*
+     * Build the initial task context.
+     *
+     * The stack grows downward. The top contains task_exit()
+     * as the return address for task_test_function().
+     */
+    unsigned int stack_top =
+        (unsigned int)(
+            task_test_stack +
+            sizeof(task_test_stack)
+        );
+
+    stack_top &= ~0x0F;
+
+    stack_top -= sizeof(unsigned int);
+
+    *(unsigned int *)stack_top =
+        (unsigned int)task_exit;
+
+    test_context.eax = 0;
+    test_context.ebx = 0;
+    test_context.ecx = 0;
+    test_context.edx = 0;
+    test_context.esi = 0;
+    test_context.edi = 0;
+    test_context.ebp = 0;
+
+    test_context.esp = stack_top;
+    test_context.eip = (unsigned int)task_test_function;
+
+    /*
+     * Interrupts enabled for the task.
+     */
+    test_context.eflags = 0x202;
+
+    /*
+     * Switch into the first task.
+     */
+    task_switch(
+        &kernel_context,
+        &test_context
+    );
+
+    /*
+     * Execution resumes here after task_exit()
+     * switches back to kernel_context.
+     */
+    current_task = 0;
+
+    print_at(
+        22,
+        0,
+        "Task finished. Kernel resumed."
+    );
+
+    keyboard_row = 13;
+    keyboard_index = 0;
 
     shell_prompt();
+
+    /*
+     * Keep the kernel alive while interrupts continue.
+     */
+    while (1)
+    {
+        __asm__ volatile ("hlt");
+    }
 }
 
 /* ---------- Keyboard Handler ---------- */
@@ -440,14 +578,16 @@ void keyboard_handle(unsigned char scancode)
     char c = 0;
 
     /* Left Shift / Right Shift press */
-    if (scancode == 0x2A || scancode == 0x36)
+    if (scancode == 0x2A ||
+        scancode == 0x36)
     {
         shift_pressed = 1;
         return;
     }
 
     /* Left Shift / Right Shift release */
-    if (scancode == 0xAA || scancode == 0xB6)
+    if (scancode == 0xAA ||
+        scancode == 0xB6)
     {
         shift_pressed = 0;
         return;
@@ -465,7 +605,8 @@ void keyboard_handle(unsigned char scancode)
             keyboard_buffer[keyboard_index] = 0;
 
             int pos =
-                keyboard_row * 80 + keyboard_column;
+                keyboard_row * 80 +
+                keyboard_column;
 
             vga[pos] = 0x0720;
         }
@@ -484,7 +625,6 @@ void keyboard_handle(unsigned char scancode)
     }
 
     /* Keyboard scan codes */
-
     switch (scancode)
     {
         case 0x10: c = 'q'; break;
@@ -537,7 +677,8 @@ void keyboard_handle(unsigned char scancode)
         keyboard_index++;
 
         int pos =
-            keyboard_row * 80 + keyboard_column;
+            keyboard_row * 80 +
+            keyboard_column;
 
         vga[pos] = 0x0700 | c;
 
