@@ -9,6 +9,7 @@ bits 32
 global kernel_start
 global task_switch
 global c_print_string
+global enter_user_mode
 
 extern scheduler_tick
 extern kernel_main
@@ -159,7 +160,6 @@ clear_screen:
 
     mov word [idt_start + 6], ax
 
-
     ; -----------------------------------------
     ; Vector 32 -> Timer
     ; -----------------------------------------
@@ -294,6 +294,78 @@ kernel_halt:
     hlt
     jmp kernel_halt
 
+; =========================================================
+; enter_user_mode
+;
+; Switch from Ring 0 (kernel) to Ring 3 (user mode).
+;
+; User selectors from gdt.inc:
+;   User code = 0x18 + RPL3 = 0x1B
+;   User data = 0x20 + RPL3 = 0x23
+; =========================================================
+
+enter_user_mode:
+
+    mov esi, s_user_prepare
+    call serial_print
+
+    cli
+
+    ; Use the user data segment while preparing the
+    ; Ring 3 execution environment.
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    ; Build the Ring 3 IRET frame:
+    ;
+    ;   SS
+    ;   ESP
+    ;   EFLAGS
+    ;   CS
+    ;   EIP
+    ;
+    ; IRET will consume these and change CPL from 0 to 3.
+
+    push dword 0x23
+    push dword user_stack_top
+    push dword 0x002
+    push dword 0x1B
+    push dword user_mode_entry
+
+    mov esi, s_user_switch
+    call serial_print
+    iret
+
+
+; =========================================================
+; user_mode_entry
+;
+; Execution begins here after the Ring 0 -> Ring 3 IRET.
+; =========================================================
+
+user_mode_entry:
+
+    mov edi, 0xB8C80
+    mov esi, user_mode_message
+
+.user_print:
+    lodsb
+
+    test al, al
+    jz .done
+
+    mov ah, 0x07
+    stosw
+
+    jmp .user_print
+
+.done:
+
+.user_halt:
+    jmp .user_halt
 
 ; =========================================================
 ; task_switch
@@ -487,6 +559,10 @@ isr0:
 ; PIT Timer ISR
 ; =========================================================
 
+.gp_halt:
+    hlt
+    jmp .gp_halt
+
 isr_timer:
 
     pushad
@@ -642,6 +718,9 @@ s_iret db '[InitraOS] IRET returned to kernel', 13, 10, 0
 
 s_bootok db '[InitraOS] BOOT_OK', 13, 10, 0
 
+s_user_prepare db '[InitraOS] Preparing user mode', 13, 10, 0
+
+s_user_switch  db '[InitraOS] Switching to Ring 3', 13, 10, 0
 
 ; =========================================================
 ; Variables
@@ -661,7 +740,6 @@ cpu_model dd 0
 
 timer_ticks dd 0
 
-
 ; =========================================================
 ; IDT
 ;
@@ -680,6 +758,17 @@ idt_descriptor:
     dw idt_end - idt_start - 1
     dd idt_start
 
+; =========================================================
+; Ring 3 test data
+; =========================================================
+
+user_mode_message db 'USER MODE WORKED!', 0
+
+align 16
+user_stack:
+    times 4096 db 0
+
+user_stack_top:
 
 ; =========================================================
 ; Includes

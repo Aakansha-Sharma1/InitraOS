@@ -250,6 +250,7 @@ typedef struct task_context
 extern void task_switch(task_context_t *old_context,
                         task_context_t *new_context);
 extern void scheduler_tick(void);
+extern void enter_user_mode(void);
 
 static unsigned int next_task_id = 1;
 
@@ -573,6 +574,8 @@ void kernel_main(void)
 
     heap_pointer =
         align_up_4k((unsigned int)&__kernel_end);
+
+        enter_user_mode();
 
     /*
      * Create the first task.
