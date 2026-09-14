@@ -4,6 +4,8 @@
 #define TASK_RUNNING   1
 #define TASK_BLOCKED   2
 #define TASK_FINISHED  3
+#define TASK_KERNEL    0
+#define TASK_USER      3
 
 extern char cpu_vendor[13];
 extern char __kernel_end;
@@ -228,6 +230,7 @@ typedef struct task
 {
     unsigned int id;
     unsigned int state;
+    unsigned int privilege;
     unsigned int esp;
     unsigned int ebp;
     struct task *next;
@@ -272,6 +275,7 @@ static task_t *task_create(void)
 
     task->id = next_task_id++;
     task->state = TASK_READY;
+    task->privilege = TASK_KERNEL;
     task->esp = 0;
     task->ebp = 0;
     task->next = 0;
