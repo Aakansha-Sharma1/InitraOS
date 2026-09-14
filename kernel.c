@@ -233,6 +233,7 @@ typedef struct task
     unsigned int privilege;
     unsigned int esp;
     unsigned int ebp;
+    unsigned int stack_base;
     struct task *next;
 } task_t;
 
@@ -276,6 +277,14 @@ static task_t *task_create(void)
     task->id = next_task_id++;
     task->state = TASK_READY;
     task->privilege = TASK_KERNEL;
+    task->stack_base =
+    (unsigned int)heap_alloc(4096);
+
+if (task->stack_base == 0)
+{
+    heap_free(task);
+    return 0;
+}
     task->esp = 0;
     task->ebp = 0;
     task->next = 0;
