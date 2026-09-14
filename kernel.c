@@ -27,6 +27,16 @@ static void paging_enable(void);
 static void page_directory_init(void);
 static void page_tables_init(void);
 
+static int page_map(
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags
+);
+
+static int page_unmap(
+    unsigned int virtual_address
+);
+
 /* ---------- Heap ---------- */
 
 typedef struct heap_block
@@ -435,6 +445,48 @@ static void paging_enable(void)
         : "r"(directory)
         : "eax", "memory"
     );
+}
+
+static int page_map(
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags
+)
+{
+    unsigned int directory_index =
+        (virtual_address >> 22) & 0x3FF;
+
+    unsigned int table_index =
+        (virtual_address >> 12) & 0x3FF;
+
+    if (directory_index >= PAGE_TABLE_COUNT)
+    {
+        return 0;
+    }
+
+    page_tables[directory_index][table_index] =
+        (physical_address & 0xFFFFF000) |
+        (flags & 0xFFF);
+
+    return 1;
+}
+
+static int page_unmap(unsigned int virtual_address)
+{
+    unsigned int directory_index =
+        (virtual_address >> 22) & 0x3FF;
+
+    unsigned int table_index =
+        (virtual_address >> 12) & 0x3FF;
+
+    if (directory_index >= PAGE_TABLE_COUNT)
+    {
+        return 0;
+    }
+
+    page_tables[directory_index][table_index] = 0;
+
+    return 1;
 }
 
 static int user_space_prepare(void)
