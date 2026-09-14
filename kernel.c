@@ -254,7 +254,12 @@ typedef struct task_context
 extern void task_switch(task_context_t *old_context,
                         task_context_t *new_context);
 extern void scheduler_tick(void);
-extern void enter_user_mode(void);
+extern void enter_user_mode(
+    unsigned int entry,
+    unsigned int stack_top
+);
+
+extern void user_mode_entry(void);
 
 static unsigned int next_task_id = 1;
 
@@ -640,7 +645,10 @@ if (next_task != 0)
     current_task->state = TASK_RUNNING;
 }
 
-enter_user_mode();
+enter_user_mode(
+    (unsigned int)user_mode_entry,
+    user_test->esp
+);
 
     /*
      * Create the first task.

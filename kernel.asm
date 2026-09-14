@@ -10,6 +10,7 @@ global kernel_start
 global task_switch
 global c_print_string
 global enter_user_mode
+global user_mode_entry
 
 extern scheduler_tick
 extern kernel_main
@@ -306,39 +307,31 @@ kernel_halt:
 
 enter_user_mode:
 
-    mov esi, s_user_prepare
-    call serial_print
+    ; C calling convention:
+    ; [esp + 4] = user entry address
+    ; [esp + 8] = user stack top
+
+    mov eax, [esp + 4]
+    mov edx, [esp + 8]
 
     cli
 
-    ; Use the user data segment while preparing the
-    ; Ring 3 execution environment.
-    mov ax, 0x23
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
+    mov bx, 0x23
+    mov ds, bx
+    mov es, bx
+    mov fs, bx
+    mov gs, bx
 
-    ; Build the Ring 3 IRET frame:
-    ;
-    ;   SS
-    ;   ESP
-    ;   EFLAGS
-    ;   CS
-    ;   EIP
-    ;
-    ; IRET will consume these and change CPL from 0 to 3.
+    ; Ring 3 IRET frame:
+    ; SS, ESP, EFLAGS, CS, EIP
 
     push dword 0x23
-    push dword user_stack_top
+    push edx
     push dword 0x002
     push dword 0x1B
-    push dword user_mode_entry
+    push eax
 
-    mov esi, s_user_switch
-    call serial_print
     iret
-
 
 ; =========================================================
 ; user_mode_entry
