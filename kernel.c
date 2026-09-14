@@ -451,8 +451,7 @@ static task_t *task_create_user(void)
         (unsigned int)
         user_mode_entry;
 
-    task->context->eflags =
-        0x202;
+    task->context->eflags = 0x002;
 
     task->context->privilege =
         TASK_USER;
