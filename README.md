@@ -192,7 +192,23 @@ The architecture will evolve as new kernel and user-space components are impleme
 
 The memory layout will evolve as paging, physical memory management, and 64-bit support are introduced.
 
----
+### Physical Memory Management Model
+
+Physical memory is managed in 4 KiB frames.
+
+```text
+Physical Memory
+│
+├── Reserved
+│   ├── BIOS / low memory
+│   ├── Bootloader / Stage 2
+│   ├── Kernel
+│   └── Other reserved regions
+│
+└── Available RAM
+    └── 4 KiB physical frames
+        ├── Free
+        └── Allocated
 
 ## Technologies
 
