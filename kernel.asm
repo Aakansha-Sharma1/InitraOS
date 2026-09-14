@@ -449,7 +449,6 @@ task_switch:
     mov ecx, [esp + 32]
     mov [edx + 36], ecx
 
-
     ; -----------------------------------------
     ; Load new context pointer
     ; -----------------------------------------
@@ -465,22 +464,51 @@ task_switch:
 
 
     ; -----------------------------------------
-    ; Build IRET frame on new stack
+    ; Check task privilege
     ;
-    ; iret expects:
-    ;
-    ;   EIP
-    ;   CS
-    ;   EFLAGS
-    ;
-    ; in reverse push order.
+    ; +40 = privilege
+    ; 0    = Ring 0
+    ; 3    = Ring 3
+    ; -----------------------------------------
+
+    cmp dword [ebp + 40], 3
+    je task_switch_user
+
+
+    ; -----------------------------------------
+    ; Build Ring 0 IRET frame
     ; -----------------------------------------
 
     push dword [ebp + 36]
     push dword 0x08
     push dword [ebp + 32]
 
+    jmp task_switch_restore
 
+
+task_switch_user:
+
+    ; -----------------------------------------
+    ; Build Ring 3 IRET frame
+    ;
+    ; IRET will restore:
+    ;
+    ;   EIP
+    ;   CS
+    ;   EFLAGS
+    ;   ESP
+    ;   SS
+    ; -----------------------------------------
+
+    push dword 0x23
+    push dword [ebp + 28]
+    push dword [ebp + 36]
+    push dword 0x1B
+    push dword [ebp + 32]
+
+
+task_switch_restore:
+    
     ; -----------------------------------------
     ; Restore general registers
     ; -----------------------------------------
@@ -494,6 +522,7 @@ task_switch:
 
     mov ebp, [ebp + 24]
 
+iret
 
     ; -----------------------------------------
     ; Enter new context
