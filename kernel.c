@@ -19,6 +19,11 @@ extern void enter_user_mode(
 );
 
 extern void user_mode_entry(void);
+extern unsigned char user_mode_code_start[];
+extern unsigned char user_mode_code_end[];
+
+static void paging_init(void);
+static void paging_enable(void);
 
 /* ---------- Heap ---------- */
 
@@ -261,6 +266,24 @@ static void *heap_realloc(
 #define PROCESS_SPACE_START 0x00100000
 #define PROCESS_SPACE_END   0x00800000
 
+#define USER_CODE_BASE      0x00100000
+#define USER_STACK_BASE     0x007FF000
+#define USER_STACK_TOP      0x00800000
+#define VGA_MEMORY_PAGE     0x000B8000
+#define KERNEL_TEST_ADDRESS 0x00008800
+
+#define PAGE_PRESENT         0x001
+#define PAGE_WRITABLE        0x002
+#define PAGE_USER            0x004
+
+#define PAGE_TABLE_COUNT     4
+
+static unsigned int page_directory[1024]
+    __attribute__((aligned(4096)));
+
+static unsigned int page_tables[PAGE_TABLE_COUNT][1024]
+    __attribute__((aligned(4096)));
+
 typedef struct task_context task_context_t;
 
 typedef struct task
@@ -320,6 +343,108 @@ static void task_set_state(
     unsigned int state
 );
 
+/* ---------- Paging ---------- */
+
+static void paging_init(void)
+{
+    for (unsigned int table = 0;
+         table < PAGE_TABLE_COUNT;
+         table++)
+    {
+        page_directory[table] =
+            (unsigned int)page_tables[table] |
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
+
+        for (unsigned int entry = 0;
+             entry < 1024;
+             entry++)
+        {
+            unsigned int address =
+                ((table * 1024) + entry) * 0x1000;
+
+            page_tables[table][entry] =
+                address |
+                PAGE_PRESENT |
+                PAGE_WRITABLE;
+        }
+    }
+
+    page_directory[0] |= PAGE_USER;
+    page_directory[1] |= PAGE_USER;
+
+    /* Only explicitly required user pages are user accessible. */
+    page_tables[0][VGA_MEMORY_PAGE >> 12] |= PAGE_USER;
+    page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF] |= PAGE_USER;
+    page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF] |= PAGE_USER;
+
+    /* Keep the kernel image supervisor-only. */
+    page_tables[0][KERNEL_TEST_ADDRESS >> 12] =
+        KERNEL_TEST_ADDRESS |
+        PAGE_PRESENT |
+        PAGE_WRITABLE;
+}
+
+static void paging_enable(void)
+{
+    unsigned int directory =
+        (unsigned int)page_directory;
+
+    __asm__ volatile (
+        "mov %0, %%cr3\n"
+        "mov %%cr0, %%eax\n"
+        "or $0x80000000, %%eax\n"
+        "mov %%eax, %%cr0\n"
+        :
+        : "r"(directory)
+        : "eax", "memory"
+    );
+}
+
+static int user_space_prepare(void)
+{
+    unsigned int source_start =
+        (unsigned int)user_mode_code_start;
+
+    unsigned int source_end =
+        (unsigned int)user_mode_code_end;
+
+    unsigned int source_size =
+        source_end - source_start;
+
+    if (source_size == 0 ||
+        source_size > 0x1000)
+    {
+        return 0;
+    }
+
+    unsigned char *source =
+        (unsigned char *)source_start;
+
+    unsigned char *destination =
+        (unsigned char *)USER_CODE_BASE;
+
+    for (unsigned int i = 0;
+         i < source_size;
+         i++)
+    {
+        destination[i] = source[i];
+    }
+
+    /* Clear the entire user stack page before entering Ring 3. */
+    volatile unsigned char *user_stack =
+        (volatile unsigned char *)USER_STACK_BASE;
+
+    for (unsigned int i = 0;
+         i < 0x1000;
+         i++)
+    {
+        user_stack[i] = 0;
+    }
+
+    return 1;
+}
+
 /* ---------- Kernel Task Creation ---------- */
 
 static task_t *task_create(void)
@@ -352,7 +477,7 @@ static task_t *task_create(void)
     task->next = 0;
 
     /*
-     * Allocate a dedicated 4096-byte stack.
+     * Allocate a dedicated 4096-byte kernel stack.
      */
     task->stack_base =
         (unsigned int)heap_alloc(4096);
@@ -404,11 +529,19 @@ static task_t *task_create_user(void)
         TASK_USER;
 
     /*
-     * Stack grows downward.
-     * Start ESP at the top of the dedicated stack.
+     * The user task does not use the kernel heap stack for Ring 3.
+     * Release the temporary kernel stack and use the dedicated
+     * 0x007FF000 user stack page instead.
      */
+    heap_free(
+        (void *)task->stack_base
+    );
+
+    task->stack_base =
+        USER_STACK_BASE;
+
     task->esp =
-        task->stack_base + 4096;
+        USER_STACK_TOP;
 
     task->esp &=
         ~0x0F;
@@ -447,11 +580,12 @@ static task_t *task_create_user(void)
     task->context->esp =
         task->esp;
 
+    /* User code is copied into a user-accessible page. */
     task->context->eip =
-        (unsigned int)
-        user_mode_entry;
+        USER_CODE_BASE;
 
-    task->context->eflags = 0x002;
+    task->context->eflags =
+        0x202;
 
     task->context->privilege =
         TASK_USER;
@@ -817,7 +951,7 @@ static void shell_execute(void)
 
 void kernel_main(void)
 {
-    __asm__ volatile ("sti");
+    __asm__ volatile ("cli");
 
     heap_pointer =
         align_up_4k(
@@ -832,7 +966,7 @@ void kernel_main(void)
         TASK_KERNEL;
 
     /*
-     * Create the first task.
+     * Create the first kernel task.
      */
     current_task =
         task_create();
@@ -856,7 +990,8 @@ void kernel_main(void)
     }
 
     /*
-     * Create a user task.
+     * Create a user task. Its code and stack live in user-accessible
+     * pages, while the kernel image remains supervisor-only.
      */
     task_t *user_test =
         task_create_user();
@@ -874,13 +1009,9 @@ void kernel_main(void)
         print_at(
             11,
             0,
-            "USER TASK CREATED WITH SEPARATE STACK"
+            "USER TASK: RING 3 + PROTECTED MEMORY"
         );
 
-        /*
-         * Keep the user task READY so that
-         * the scheduler can select it.
-         */
         task_set_state(
             user_test,
             TASK_READY
@@ -888,9 +1019,7 @@ void kernel_main(void)
     }
 
     /*
-     * Build the existing kernel task test context.
-     *
-     * Stack grows downward.
+     * Keep the existing kernel task-switch test.
      */
     unsigned int stack_top =
         (unsigned int)(
@@ -928,17 +1057,13 @@ void kernel_main(void)
     test_context.privilege =
         TASK_KERNEL;
 
-    /*
-     * Switch into the test task.
-     */
     task_switch(
         &kernel_context,
         &test_context
     );
 
     /*
-     * Execution resumes here after
-     * task_exit() switches back.
+     * Execution resumes here after task_exit() switches back.
      */
     current_task = 0;
 
@@ -948,28 +1073,64 @@ void kernel_main(void)
         "Task finished. Kernel resumed."
     );
 
-    keyboard_row = 13;
-    keyboard_index = 0;
+    /*
+     * Prepare the user image before paging is enabled.
+     */
+    if (!user_space_prepare())
+    {
+        print_at(
+            12,
+            0,
+            "USER IMAGE PREPARE FAILED"
+        );
 
-    shell_prompt();
+        shell_prompt();
+
+        while (1)
+        {
+            __asm__ volatile ("hlt");
+        }
+    }
+
+    print_at(
+        12,
+        0,
+        "PAGING: KERNEL SUPERVISOR / USER PAGES READY"
+    );
+
+    paging_init();
+    paging_enable();
+
+    print_at(
+        13,
+        0,
+        "PAGING ENABLED: PROCESS SPACE PROTECTED"
+    );
 
     /*
- * Start the user task through task_switch().
- */
-if (user_test != 0 &&
-    user_test->context != 0)
-{
-    current_task =
-        user_test;
+     * Start the user task through the privilege-aware task switch.
+     */
+    if (user_test != 0 &&
+        user_test->context != 0)
+    {
+        current_task =
+            user_test;
 
-    current_task->state =
-        TASK_RUNNING;
+        current_task->state =
+            TASK_RUNNING;
 
-    task_switch(
-        &kernel_context,
-        user_test->context
-    );
-}
+        print_at(
+            14,
+            0,
+            "SWITCHING TO RING 3 USER TASK"
+        );
+
+        task_switch(
+            &kernel_context,
+            user_test->context
+        );
+    }
+
     while (1)
     {
         __asm__ volatile ("hlt");
