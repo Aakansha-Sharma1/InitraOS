@@ -609,6 +609,9 @@ isr0:
 ; Page Fault Handler
 ; =========================================================
 
+; Page fault handler: capture CR2 and the CPU error code,
+; report the fault, and stop execution safely.
+
 isr_page_fault:
 
     cli
