@@ -61,9 +61,8 @@ static void *heap_alloc(unsigned int size)
                 size + sizeof(heap_block_t) + 1)
             {
                 heap_block_t *new_block =
-                    (heap_block_t *)(
-                        (unsigned int)(current + 1) + size
-                    );
+                    (heap_block_t *)
+                    ((unsigned int)(current + 1) + size);
 
                 new_block->size =
                     current->size -
@@ -87,11 +86,9 @@ static void *heap_alloc(unsigned int size)
 
     /* No suitable free block found, allocate new memory */
     if (heap_pointer > heap_limit ||
-        heap_limit - heap_pointer <
-            sizeof(heap_block_t) ||
-        size >
-            (heap_limit - heap_pointer) -
-            sizeof(heap_block_t))
+        heap_limit - heap_pointer < sizeof(heap_block_t) ||
+        size > (heap_limit - heap_pointer) -
+               sizeof(heap_block_t))
     {
         return 0;
     }
@@ -121,7 +118,8 @@ static void *heap_alloc(unsigned int size)
 
     heap_pointer += sizeof(heap_block_t);
 
-    unsigned int address = heap_pointer;
+    unsigned int address =
+        heap_pointer;
 
     heap_pointer += size;
 
@@ -135,7 +133,8 @@ static void heap_free(void *address)
         return;
     }
 
-    heap_block_t *current = heap_first_block;
+    heap_block_t *current =
+        heap_first_block;
 
     while (current != 0)
     {
@@ -206,7 +205,7 @@ static void *heap_realloc(
         return 0;
     }
 
-    /* Keep allocation alignment consistent */
+    /* Keep allocation alignment consistent with heap_alloc */
     size = (size + 3) & ~3;
 
     heap_block_t *current =
@@ -231,6 +230,7 @@ static void *heap_realloc(
                 return 0;
             }
 
+            /* Copy the old contents */
             unsigned char *source =
                 (unsigned char *)address;
 
@@ -261,10 +261,6 @@ static void *heap_realloc(
 #define PROCESS_SPACE_START 0x00100000
 #define PROCESS_SPACE_END   0x00800000
 
-/*
- * Forward declaration so task_t can
- * contain a context pointer.
- */
 typedef struct task_context task_context_t;
 
 typedef struct task
@@ -295,6 +291,7 @@ struct task_context
     unsigned int esp;
     unsigned int eip;
     unsigned int eflags;
+    unsigned int privilege;
 };
 
 extern void task_switch(
@@ -328,25 +325,34 @@ static void task_set_state(
 static task_t *task_create(void)
 {
     task_t *task =
-        (task_t *)heap_alloc(sizeof(task_t));
+        (task_t *)heap_alloc(
+            sizeof(task_t)
+        );
 
     if (task == 0)
     {
         return 0;
     }
 
-    task->id = next_task_id++;
-    task->state = TASK_READY;
-    task->privilege = TASK_KERNEL;
+    task->id =
+        next_task_id++;
+
+    task->state =
+        TASK_READY;
+
+    task->privilege =
+        TASK_KERNEL;
 
     task->esp = 0;
     task->ebp = 0;
+
     task->stack_base = 0;
     task->context = 0;
+
     task->next = 0;
 
     /*
-     * Allocate a dedicated 4 KB stack.
+     * Allocate a dedicated 4096-byte stack.
      */
     task->stack_base =
         (unsigned int)heap_alloc(4096);
@@ -358,7 +364,7 @@ static task_t *task_create(void)
     }
 
     /*
-     * Add the new task to the scheduler list.
+     * Add task to scheduler list.
      */
     if (task_list == 0)
     {
@@ -366,14 +372,17 @@ static task_t *task_create(void)
     }
     else
     {
-        task_t *current = task_list;
+        task_t *current =
+            task_list;
 
         while (current->next != 0)
         {
-            current = current->next;
+            current =
+                current->next;
         }
 
-        current->next = task;
+        current->next =
+            task;
     }
 
     return task;
@@ -391,7 +400,8 @@ static task_t *task_create_user(void)
         return 0;
     }
 
-    task->privilege = TASK_USER;
+    task->privilege =
+        TASK_USER;
 
     /*
      * Stack grows downward.
@@ -400,7 +410,8 @@ static task_t *task_create_user(void)
     task->esp =
         task->stack_base + 4096;
 
-    task->esp &= ~0x0F;
+    task->esp &=
+        ~0x0F;
 
     task->ebp =
         task->esp;
@@ -409,7 +420,8 @@ static task_t *task_create_user(void)
      * Give the user task its own CPU context.
      */
     task->context =
-        (task_context_t *)heap_alloc(
+        (task_context_t *)
+        heap_alloc(
             sizeof(task_context_t)
         );
 
@@ -429,11 +441,21 @@ static task_t *task_create_user(void)
     task->context->edx = 0;
     task->context->esi = 0;
     task->context->edi = 0;
-    task->context->ebp = task->ebp;
-    task->context->esp = task->esp;
+    task->context->ebp =
+        task->ebp;
+
+    task->context->esp =
+        task->esp;
+
     task->context->eip =
-        (unsigned int)user_mode_entry;
-    task->context->eflags = 0x202;
+        (unsigned int)
+        user_mode_entry;
+
+    task->context->eflags =
+        0x202;
+
+    task->context->privilege =
+        TASK_USER;
 
     return task;
 }
@@ -450,13 +472,15 @@ static void task_set_state(
         return;
     }
 
-    task->state = state;
+    task->state =
+        state;
 }
 
 /* ---------- Scheduler ---------- */
 
 /*
- * Select the next READY task using round-robin order.
+ * Select the next READY task using
+ * round-robin order.
  */
 static task_t *task_schedule_next(void)
 {
@@ -465,7 +489,8 @@ static task_t *task_schedule_next(void)
         return 0;
     }
 
-    task_t *start = task_list;
+    task_t *start =
+        task_list;
 
     if (current_task != 0 &&
         current_task->next != 0)
@@ -474,20 +499,24 @@ static task_t *task_schedule_next(void)
             current_task->next;
     }
 
-    task_t *task = start;
+    task_t *task =
+        start;
 
     do
     {
-        if (task->state == TASK_READY)
+        if (task->state ==
+            TASK_READY)
         {
             return task;
         }
 
-        task = task->next;
+        task =
+            task->next;
 
         if (task == 0)
         {
-            task = task_list;
+            task =
+                task_list;
         }
 
     } while (task != start);
@@ -551,7 +580,8 @@ static void task_exit(void)
 static void task_test_function(void)
 {
     volatile unsigned short *vga =
-        (volatile unsigned short *)0xB8700;
+        (volatile unsigned short *)
+        0xB8700;
 
     const char *message =
         "TASK SWITCH WORKED!";
@@ -561,7 +591,8 @@ static void task_test_function(void)
          i++)
     {
         vga[i] =
-            0x0700 | message[i];
+            0x0700 |
+            message[i];
     }
 
     task_exit();
@@ -598,7 +629,8 @@ static void print_at(
             row * 80 + column;
 
         vga[pos] =
-            0x0700 | *text;
+            0x0700 |
+            *text;
 
         column++;
         text++;
@@ -616,7 +648,8 @@ static void clear_screen(void)
          i < 80 * 25;
          i++)
     {
-        vga[i] = 0x0720;
+        vga[i] =
+            0x0720;
     }
 }
 
@@ -652,7 +685,8 @@ static void shell_prompt(void)
         "InitraOS> "
     );
 
-    keyboard_column = 10;
+    keyboard_column =
+        10;
 }
 
 /* ---------- Shell ---------- */
@@ -688,6 +722,7 @@ static void shell_execute(void)
         );
 
         keyboard_row++;
+
         keyboard_index = 0;
 
         if (keyboard_row >= 25)
@@ -787,11 +822,18 @@ void kernel_main(void)
 
     heap_pointer =
         align_up_4k(
-            (unsigned int)&__kernel_end
+            (unsigned int)
+            &__kernel_end
         );
 
     /*
-     * Create the first kernel task.
+     * The kernel context is a Ring 0 context.
+     */
+    kernel_context.privilege =
+        TASK_KERNEL;
+
+    /*
+     * Create the first task.
      */
     current_task =
         task_create();
@@ -837,8 +879,9 @@ void kernel_main(void)
         );
 
         /*
-         * Keep it out of normal scheduling
-         * until user-task switching is added.
+         * Keep the user task out of the scheduler
+         * for now. Actual Ring 3 task switching
+         * will be added separately.
          */
         task_set_state(
             user_test,
@@ -848,6 +891,8 @@ void kernel_main(void)
 
     /*
      * Build the existing kernel task test context.
+     *
+     * Stack grows downward.
      */
     unsigned int stack_top =
         (unsigned int)(
@@ -855,7 +900,8 @@ void kernel_main(void)
             sizeof(task_test_stack)
         );
 
-    stack_top &= ~0x0F;
+    stack_top &=
+        ~0x0F;
 
     stack_top -=
         sizeof(unsigned int);
@@ -875,13 +921,17 @@ void kernel_main(void)
         stack_top;
 
     test_context.eip =
-        (unsigned int)task_test_function;
+        (unsigned int)
+        task_test_function;
 
     test_context.eflags =
         0x202;
 
+    test_context.privilege =
+        TASK_KERNEL;
+
     /*
-     * Switch into the existing kernel task test.
+     * Switch into the test task.
      */
     task_switch(
         &kernel_context,
@@ -889,7 +939,8 @@ void kernel_main(void)
     );
 
     /*
-     * Execution resumes after task_exit().
+     * Execution resumes here after
+     * task_exit() switches back.
      */
     current_task = 0;
 
@@ -905,18 +956,19 @@ void kernel_main(void)
     shell_prompt();
 
     /*
-     * Existing Ring 3 test.
-     *
-     * The user task's dedicated stack is used.
+     * Enter Ring 3 using the user task's
+     * dedicated stack.
      */
-    enter_user_mode(
-        (unsigned int)user_mode_entry,
-        user_test->esp
-    );
+    if (user_test != 0 &&
+        user_test->context != 0)
+    {
+        enter_user_mode(
+            (unsigned int)
+            user_mode_entry,
+            user_test->esp
+        );
+    }
 
-    /*
-     * Keep the kernel alive.
-     */
     while (1)
     {
         __asm__ volatile ("hlt");
