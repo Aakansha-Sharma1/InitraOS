@@ -311,6 +311,29 @@ if (task->stack_base == 0)
     return task;
 }
 
+static task_t *task_create_user(void)
+{
+    task_t *task = task_create();
+
+    if (task == 0)
+    {
+        return 0;
+    }
+
+    task->privilege = TASK_USER;
+
+    /*
+     * Stack grows downward, so ESP starts at the top
+     * of the task's dedicated 4 KB stack.
+     */
+    task->esp = task->stack_base + 4096;
+    task->esp &= ~0x0F;
+
+    task->ebp = task->esp;
+
+    return task;
+}
+
 static void task_set_state(task_t *task, unsigned int state)
 {
     if (task == 0)
@@ -588,7 +611,36 @@ void kernel_main(void)
     heap_pointer =
         align_up_4k((unsigned int)&__kernel_end);
 
-        enter_user_mode();
+task_t *user_test = task_create_user();
+
+if (user_test == 0)
+{
+    print_at(
+        15,
+        0,
+        "USER TASK CREATE FAILED"
+    );
+}
+else
+{
+    print_at(
+        15,
+        0,
+        "USER TASK CREATED WITH SEPARATE STACK"
+    );
+
+    task_set_state(user_test, TASK_FINISHED);
+}
+
+task_t *next_task = task_schedule_next();
+
+if (next_task != 0)
+{
+    current_task = next_task;
+    current_task->state = TASK_RUNNING;
+}
+
+enter_user_mode();
 
     /*
      * Create the first task.
@@ -601,13 +653,6 @@ if (current_task == 0)
     return;
 }
 
-task_t *next_task = task_schedule_next();
-
-if (next_task != 0)
-{
-    current_task = next_task;
-    current_task->state = TASK_RUNNING;
-}
 
     /*
      * Build the initial task context.
