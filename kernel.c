@@ -355,6 +355,11 @@ static void page_directory_init(void)
     }
 }
 
+/*
+ * Build the initial identity-mapped page tables.
+ * Each virtual page maps to the physical page at the same address.
+ */
+
 static void page_tables_init(void)
 {
     for (unsigned int table = 0;
