@@ -416,6 +416,11 @@ static void paging_init(void)
         PAGE_WRITABLE;
 }
 
+/*
+ * Load the page directory into CR3 and enable
+ * paging through the CPU's CR0.PG control bit.
+ */
+
 static void paging_enable(void)
 {
     unsigned int directory =
