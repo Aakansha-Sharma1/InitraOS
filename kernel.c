@@ -25,6 +25,7 @@ extern unsigned char user_mode_code_end[];
 static void paging_init(void);
 static void paging_enable(void);
 static void page_directory_init(void);
+static void page_tables_init(void);
 
 /* ---------- Heap ---------- */
 
@@ -354,19 +355,12 @@ static void page_directory_init(void)
     }
 }
 
-static void paging_init(void)
+static void page_tables_init(void)
 {
-    page_directory_init();
-
     for (unsigned int table = 0;
          table < PAGE_TABLE_COUNT;
          table++)
     {
-        page_directory[table] =
-            (unsigned int)page_tables[table] |
-            PAGE_PRESENT |
-            PAGE_WRITABLE;
-
         for (unsigned int entry = 0;
              entry < 1024;
              entry++)
@@ -379,6 +373,21 @@ static void paging_init(void)
                 PAGE_PRESENT |
                 PAGE_WRITABLE;
         }
+    }
+}
+static void paging_init(void)
+{
+    page_directory_init();
+    page_tables_init();
+
+    for (unsigned int table = 0;
+         table < PAGE_TABLE_COUNT;
+         table++)
+    {
+        page_directory[table] =
+            (unsigned int)page_tables[table] |
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
     }
 
     page_directory[0] |= PAGE_USER;
@@ -1146,8 +1155,9 @@ void kernel_main(void)
     {
         __asm__ volatile ("hlt");
     }
-}
 
+
+}
 /* ---------- Keyboard Handler ---------- */
 
 void keyboard_handle(
