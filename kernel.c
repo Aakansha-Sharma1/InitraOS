@@ -380,6 +380,12 @@ static void page_tables_init(void)
         }
     }
 }
+
+/*
+ * Initialize the initial address space by connecting
+ * the identity-mapped page tables to the page directory.
+ */
+
 static void paging_init(void)
 {
     page_directory_init();
