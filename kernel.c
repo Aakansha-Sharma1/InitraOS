@@ -878,13 +878,12 @@ void kernel_main(void)
         );
 
         /*
-         * Keep the user task out of the scheduler
-         * for now. Actual Ring 3 task switching
-         * will be added separately.
+         * Keep the user task READY so that
+         * the scheduler can select it.
          */
         task_set_state(
             user_test,
-            TASK_FINISHED
+            TASK_READY
         );
     }
 
@@ -955,19 +954,22 @@ void kernel_main(void)
     shell_prompt();
 
     /*
-     * Enter Ring 3 using the user task's
-     * dedicated stack.
-     */
-    if (user_test != 0 &&
-        user_test->context != 0)
-    {
-        enter_user_mode(
-            (unsigned int)
-            user_mode_entry,
-            user_test->esp
-        );
-    }
+ * Start the user task through task_switch().
+ */
+if (user_test != 0 &&
+    user_test->context != 0)
+{
+    current_task =
+        user_test;
 
+    current_task->state =
+        TASK_RUNNING;
+
+    task_switch(
+        &kernel_context,
+        user_test->context
+    );
+}
     while (1)
     {
         __asm__ volatile ("hlt");
