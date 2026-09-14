@@ -12,6 +12,8 @@ extern char cpu_vendor[13];
 extern char __kernel_end;
 
 extern void c_print_string(const char *message);
+extern void c_serial_print(const char *message);
+extern void c_serial_print_hex(unsigned int value);
 
 extern void enter_user_mode(
     unsigned int entry,
@@ -37,6 +39,7 @@ static int page_unmap(
     unsigned int virtual_address
 );
 
+
 /* ---------- Heap ---------- */
 
 typedef struct heap_block
@@ -56,6 +59,141 @@ static unsigned int align_up_4k(unsigned int address)
     return (address + 0xFFF) & ~0xFFF;
 }
 
+
+/* ---------- Physical Frame Allocator ---------- */
+
+#define E820_ENTRIES_ADDRESS 0x00005004
+#define E820_ENTRY_SIZE      24
+#define E820_MAX_ENTRIES     32
+#define E820_USABLE          1
+
+static unsigned int frame_region_index = 0;
+static unsigned int frame_next_address = 0;
+
+static unsigned int frame_alloc(void)
+{
+    while (frame_region_index < E820_MAX_ENTRIES)
+    {
+        unsigned int entry =
+            E820_ENTRIES_ADDRESS +
+            frame_region_index * E820_ENTRY_SIZE;
+
+        unsigned int base =
+            *(unsigned int *)(entry + 0);
+
+        unsigned int length =
+            *(unsigned int *)(entry + 8);
+
+        unsigned int type =
+            *(unsigned int *)(entry + 16);
+
+        if (type != E820_USABLE || length < 0x1000)
+        {
+            frame_region_index++;
+            continue;
+        }
+
+        unsigned int region_end =
+            base + length;
+
+        if (frame_next_address == 0)
+        {
+            frame_next_address =
+                align_up_4k(base);
+        }
+
+        /*
+         * Do not allocate memory already occupied
+         * by the kernel image.
+         */
+        unsigned int kernel_end =
+            align_up_4k(
+                (unsigned int)&__kernel_end
+            );
+
+        if (frame_next_address < kernel_end)
+        {
+            frame_next_address =
+                kernel_end;
+        }
+
+        /*
+         * Return one 4 KiB physical frame.
+         */
+        if (frame_next_address + 0x1000 <= region_end)
+        {
+            unsigned int frame =
+                frame_next_address;
+
+            frame_next_address += 0x1000;
+
+            return frame;
+        }
+
+        /*
+         * Current usable region is exhausted.
+         * Continue with the next E820 region.
+         */
+        frame_region_index++;
+        frame_next_address = 0;
+    }
+
+    return 0;
+}
+
+
+/* ---------- Physical Frame Allocator Test ---------- */
+
+static void frame_allocator_test(void)
+{
+    unsigned int frame1 =
+        frame_alloc();
+
+    unsigned int frame2 =
+        frame_alloc();
+
+    if (frame1 == 0 || frame2 == 0)
+    {
+        c_serial_print(
+            "[InitraOS] FRAME_ALLOC_FAIL\n"
+        );
+
+        return;
+    }
+
+    if ((frame1 & 0xFFF) != 0 ||
+        (frame2 & 0xFFF) != 0 ||
+        frame2 != frame1 + 0x1000)
+    {
+        c_serial_print(
+            "[InitraOS] FRAME_ALLOC_FAIL\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] FRAME_ALLOC_OK\n"
+    );
+
+    c_serial_print(
+        "[InitraOS] FRAME1: 0x"
+    );
+
+    c_serial_print_hex(frame1);
+
+    c_serial_print(
+        "\n[InitraOS] FRAME2: 0x"
+    );
+
+    c_serial_print_hex(frame2);
+
+    c_serial_print("\n");
+}
+
+
+/* ---------- Heap Allocation ---------- */
+
 static void *heap_alloc(unsigned int size)
 {
     if (size == 0)
@@ -67,7 +205,8 @@ static void *heap_alloc(unsigned int size)
     size = (size + 3) & ~3;
 
     /* Look for a previously freed block */
-    heap_block_t *current = heap_first_block;
+    heap_block_t *current =
+        heap_first_block;
 
     while (current != 0)
     {
@@ -103,7 +242,8 @@ static void *heap_alloc(unsigned int size)
 
     /* No suitable free block found, allocate new memory */
     if (heap_pointer > heap_limit ||
-        heap_limit - heap_pointer < sizeof(heap_block_t) ||
+        heap_limit - heap_pointer <
+            sizeof(heap_block_t) ||
         size > (heap_limit - heap_pointer) -
                sizeof(heap_block_t))
     {
@@ -142,6 +282,7 @@ static void *heap_alloc(unsigned int size)
 
     return (void *)address;
 }
+
 
 static void heap_free(void *address)
 {
@@ -205,6 +346,7 @@ static void heap_free(void *address)
         current = current->next;
     }
 }
+
 
 static void *heap_realloc(
     void *address,
@@ -273,6 +415,7 @@ static void *heap_realloc(
     return 0;
 }
 
+
 /* ---------- Process Address Space ---------- */
 
 #define PROCESS_SPACE_START 0x00100000
@@ -284,13 +427,13 @@ static void *heap_realloc(
 #define VGA_MEMORY_PAGE     0x000B8000
 #define KERNEL_TEST_ADDRESS 0x00008800
 
-#define PAGE_PRESENT         0x001
-#define PAGE_WRITABLE        0x002
-#define PAGE_USER            0x004
+#define PAGE_PRESENT        0x001
+#define PAGE_WRITABLE       0x002
+#define PAGE_USER           0x004
 
-#define PAGE_TABLE_COUNT     4
+#define PAGE_TABLE_COUNT    4
 
-#define E820_COUNT_ADDRESS 0x00005000
+#define E820_COUNT_ADDRESS  0x00005000
 
 static unsigned int page_directory[1024]
     __attribute__((aligned(4096)));
@@ -298,7 +441,9 @@ static unsigned int page_directory[1024]
 static unsigned int page_tables[PAGE_TABLE_COUNT][1024]
     __attribute__((aligned(4096)));
 
+
 typedef struct task_context task_context_t;
+
 
 typedef struct task
 {
@@ -316,6 +461,7 @@ typedef struct task
     struct task *next;
 } task_t;
 
+
 struct task_context
 {
     unsigned int eax;
@@ -331,12 +477,14 @@ struct task_context
     unsigned int privilege;
 };
 
+
 extern void task_switch(
     task_context_t *old_context,
     task_context_t *new_context
 );
 
 extern void scheduler_tick(void);
+
 
 static unsigned int next_task_id = 1;
 
@@ -345,6 +493,7 @@ static task_t *task_list = 0;
 
 static task_context_t kernel_context;
 static task_context_t test_context;
+
 
 /*
  * Forward declaration.
@@ -357,21 +506,24 @@ static void task_set_state(
     unsigned int state
 );
 
+
 /* ---------- Paging ---------- */
 
 static void page_directory_init(void)
 {
-    for (unsigned int entry = 0; entry < 1024; entry++)
+    for (unsigned int entry = 0;
+         entry < 1024;
+         entry++)
     {
         page_directory[entry] = 0;
     }
 }
 
+
 /*
  * Build the initial identity-mapped page tables.
  * Each virtual page maps to the physical page at the same address.
  */
-
 static void page_tables_init(void)
 {
     for (unsigned int table = 0;
@@ -383,7 +535,8 @@ static void page_tables_init(void)
              entry++)
         {
             unsigned int address =
-                ((table * 1024) + entry) * 0x1000;
+                ((table * 1024) + entry) *
+                0x1000;
 
             page_tables[table][entry] =
                 address |
@@ -393,11 +546,11 @@ static void page_tables_init(void)
     }
 }
 
+
 /*
  * Initialize the initial address space by connecting
  * the identity-mapped page tables to the page directory.
  */
-
 static void paging_init(void)
 {
     page_directory_init();
@@ -417,9 +570,14 @@ static void paging_init(void)
     page_directory[1] |= PAGE_USER;
 
     /* Only explicitly required user pages are user accessible. */
-    page_tables[0][VGA_MEMORY_PAGE >> 12] |= PAGE_USER;
-    page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF] |= PAGE_USER;
-    page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF] |= PAGE_USER;
+    page_tables[0][VGA_MEMORY_PAGE >> 12] |=
+        PAGE_USER;
+
+    page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF] |=
+        PAGE_USER;
+
+    page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF] |=
+        PAGE_USER;
 
     /* Keep the kernel image supervisor-only. */
     page_tables[0][KERNEL_TEST_ADDRESS >> 12] =
@@ -428,11 +586,11 @@ static void paging_init(void)
         PAGE_WRITABLE;
 }
 
+
 /*
  * Load the page directory into CR3 and enable
  * paging through the CPU's CR0.PG control bit.
  */
-
 static void paging_enable(void)
 {
     unsigned int directory =
@@ -448,6 +606,7 @@ static void paging_enable(void)
         : "eax", "memory"
     );
 }
+
 
 static int page_map(
     unsigned int virtual_address,
@@ -473,7 +632,10 @@ static int page_map(
     return 1;
 }
 
-static int page_unmap(unsigned int virtual_address)
+
+static int page_unmap(
+    unsigned int virtual_address
+)
 {
     unsigned int directory_index =
         (virtual_address >> 22) & 0x3FF;
@@ -486,10 +648,12 @@ static int page_unmap(unsigned int virtual_address)
         return 0;
     }
 
-    page_tables[directory_index][table_index] = 0;
+    page_tables[directory_index][table_index] =
+        0;
 
     return 1;
 }
+
 
 static int user_space_prepare(void)
 {
@@ -518,7 +682,8 @@ static int user_space_prepare(void)
          i < source_size;
          i++)
     {
-        destination[i] = source[i];
+        destination[i] =
+            source[i];
     }
 
     /* Clear the entire user stack page before entering Ring 3. */
@@ -534,6 +699,7 @@ static int user_space_prepare(void)
 
     return 1;
 }
+
 
 /* ---------- Kernel Task Creation ---------- */
 
@@ -603,6 +769,7 @@ static task_t *task_create(void)
     return task;
 }
 
+
 /* ---------- User Task Creation ---------- */
 
 static task_t *task_create_user(void)
@@ -664,6 +831,7 @@ static task_t *task_create_user(void)
     task->context->edx = 0;
     task->context->esi = 0;
     task->context->edi = 0;
+
     task->context->ebp =
         task->ebp;
 
@@ -683,6 +851,7 @@ static task_t *task_create_user(void)
     return task;
 }
 
+
 /* ---------- Task State ---------- */
 
 static void task_set_state(
@@ -698,6 +867,7 @@ static void task_set_state(
     task->state =
         state;
 }
+
 
 /* ---------- Scheduler ---------- */
 
@@ -747,6 +917,7 @@ static task_t *task_schedule_next(void)
     return 0;
 }
 
+
 void scheduler_tick(void)
 {
     task_t *next_task;
@@ -775,9 +946,11 @@ void scheduler_tick(void)
         next_task;
 }
 
+
 /* ---------- Task Test ---------- */
 
 static unsigned char task_test_stack[4096];
+
 
 static void task_exit(void)
 {
@@ -800,6 +973,7 @@ static void task_exit(void)
     }
 }
 
+
 static void task_test_function(void)
 {
     volatile unsigned short *vga =
@@ -821,6 +995,7 @@ static void task_test_function(void)
     task_exit();
 }
 
+
 /* ---------- Keyboard ---------- */
 
 static char keyboard_buffer[
@@ -833,6 +1008,7 @@ static int keyboard_column = 0;
 static int keyboard_row = 13;
 
 static int shift_pressed = 0;
+
 
 /* ---------- VGA Output ---------- */
 
@@ -860,6 +1036,7 @@ static void print_at(
     }
 }
 
+
 /* ---------- Clear Screen ---------- */
 
 static void clear_screen(void)
@@ -875,6 +1052,7 @@ static void clear_screen(void)
             0x0720;
     }
 }
+
 
 /* ---------- Command Comparison ---------- */
 
@@ -898,6 +1076,7 @@ static int command_equals(
     return keyboard_index == i;
 }
 
+
 /* ---------- Shell Prompt ---------- */
 
 static void shell_prompt(void)
@@ -911,6 +1090,7 @@ static void shell_prompt(void)
     keyboard_column =
         10;
 }
+
 
 /* ---------- Shell ---------- */
 
@@ -1037,6 +1217,7 @@ static void shell_execute(void)
     shell_prompt();
 }
 
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -1048,6 +1229,14 @@ void kernel_main(void)
             (unsigned int)
             &__kernel_end
         );
+
+    /*
+     * Physical frame allocator validation.
+     *
+     * This runs before task creation and before paging,
+     * using the E820 map prepared by Stage 2.
+     */
+    frame_allocator_test();
 
     /*
      * The kernel context is a Ring 0 context.
@@ -1225,9 +1414,9 @@ void kernel_main(void)
     {
         __asm__ volatile ("hlt");
     }
-
-
 }
+
+
 /* ---------- Keyboard Handler ---------- */
 
 void keyboard_handle(
