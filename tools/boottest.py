@@ -37,6 +37,8 @@ EXPECTED = [
     "[InitraOS] INT0 handler reached",
     "[InitraOS] IRET returned to kernel",
     "[InitraOS] BOOT_OK",
+    "[InitraOS] Page fault handled at 0x",
+    "[InitraOS] PROCESS_ISOLATION_OK",
 ]
 
 
