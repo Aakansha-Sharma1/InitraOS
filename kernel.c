@@ -24,6 +24,7 @@ extern unsigned char user_mode_code_end[];
 
 static void paging_init(void);
 static void paging_enable(void);
+static void page_directory_init(void);
 
 /* ---------- Heap ---------- */
 
@@ -345,8 +346,18 @@ static void task_set_state(
 
 /* ---------- Paging ---------- */
 
+static void page_directory_init(void)
+{
+    for (unsigned int entry = 0; entry < 1024; entry++)
+    {
+        page_directory[entry] = 0;
+    }
+}
+
 static void paging_init(void)
 {
+    page_directory_init();
+
     for (unsigned int table = 0;
          table < PAGE_TABLE_COUNT;
          table++)
