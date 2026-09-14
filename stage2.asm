@@ -1,9 +1,15 @@
 bits 16
 org 0x8000
 
+%define E820_BUFFER     0x5000
+%define E820_MAX_ENTRIES 32
+%define E820_ENTRY_SIZE  24
+%define E820_COUNT      E820_BUFFER
+%define E820_ENTRIES    (E820_BUFFER + 4)
+
 start:
     mov bx, 0
-
+    mov dword [E820_COUNT], 0
     mov ax, 0x0003
     int 0x10
 
@@ -224,6 +230,13 @@ print_string:
 ; Enter 32-bit Protected Mode
 ; -------------------------------------------------
 
+e820_failed:
+    mov si, e820_error
+    call print_string
+.e820_hang:
+    hlt
+    jmp .e820_hang
+
 enter_protected_mode:
     cli
 
@@ -237,6 +250,47 @@ enter_protected_mode:
     jmp .a20_hang
 
 .a20_ok:
+        ; Prepare BIOS E820 memory map query
+    xor ebx, ebx
+    mov di, E820_ENTRIES
+    mov ax, 0
+    mov es, ax
+
+e820_next:
+    mov edx, 0x534D4150
+    mov ecx, E820_ENTRY_SIZE
+    mov eax, 0xE820
+    int 0x15
+
+    jc e820_failed
+
+    cmp eax, 0x534D4150
+    jne e820_failed
+
+    ; BIOS must return at least the 20-byte E820 structure
+    cmp ecx, 20
+    jb e820_failed
+
+    ; If BIOS returned only 20 bytes, clear the ACPI attributes field
+    cmp ecx, 24
+    jae e820_record_ready
+
+    mov dword [es:di + 20], 0
+
+e820_record_ready:
+    inc dword [E820_COUNT]
+
+    cmp ebx, 0
+    je e820_done
+
+    add di, E820_ENTRY_SIZE
+    cmp dword [E820_COUNT], E820_MAX_ENTRIES
+    jae e820_failed
+
+    jmp e820_next
+
+e820_done:
+
     lgdt [gdt_descriptor]
 
     mov eax, cr0
@@ -302,6 +356,8 @@ sysinfo_message db 'InitraOS v0.1', 13, 10
                 db 'Shell: Initra Shell', 13, 10, 0
 
 pmode_message db 'INITRA OS - 32-bit Protected Mode: OK', 0
+
+e820_error db 'FATAL: BIOS E820 memory map failed', 13, 10, 0
 
 buffer times 64 db 0
 

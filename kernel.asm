@@ -15,6 +15,11 @@ bits 32
 %define USER_DATA_SELECTOR   0x23
 %define TSS_SELECTOR         0x28
 
+
+; =========================================================
+; Kernel entry
+; =========================================================
+
 section .text
 
 global kernel_start
@@ -29,6 +34,7 @@ extern scheduler_tick
 extern kernel_main
 extern keyboard_handle
 
+
 kernel_start:
 
     ; ---------------------------------------------------------
@@ -38,23 +44,32 @@ kernel_start:
     ; ---------------------------------------------------------
 
     mov eax, tss_start
+
     mov [kernel_gdt_tss + 2], ax
+
     shr eax, 16
+
     mov [kernel_gdt_tss + 4], al
     mov [kernel_gdt_tss + 7], ah
 
-    mov word [kernel_gdt_tss + 0], tss_end - tss_start - 1
+    mov word [kernel_gdt_tss + 0], \
+        tss_end - tss_start - 1
+
     mov byte [kernel_gdt_tss + 5], 0x89
     mov byte [kernel_gdt_tss + 6], 0x00
 
     mov eax, tss_kernel_stack_top
+
     mov [tss_start + 4], eax
     mov word [tss_start + 8], KERNEL_DATA_SELECTOR
-    mov word [tss_start + 0x66], tss_end - tss_start
+
+    mov word [tss_start + 0x66], \
+        tss_end - tss_start
 
     lgdt [kernel_gdt_descriptor]
 
     mov ax, KERNEL_DATA_SELECTOR
+
     mov ds, ax
     mov es, ax
     mov ss, ax
@@ -63,6 +78,7 @@ kernel_start:
 
     ; Reload CS from the new GDT.
     jmp KERNEL_CODE_SELECTOR:.kernel_gdt_ready
+
 
 .kernel_gdt_ready:
 
@@ -74,14 +90,22 @@ kernel_start:
     mov esi, s_banner
     call serial_print
 
+
+    ; ---------------------------------------------------------
+    ; Clear VGA screen
+    ; ---------------------------------------------------------
+
     mov edi, 0xB8000
     mov ecx, 80 * 25
     mov ax, 0x0720
 
 clear_screen:
+
     mov word [edi], ax
     add edi, 2
+
     loop clear_screen
+
 
     ; -----------------------------------------
     ; CPUID Vendor
@@ -91,10 +115,13 @@ clear_screen:
     cpuid
 
     mov [cpuid_max_leaf], eax
+
     mov [cpu_vendor], ebx
     mov [cpu_vendor + 4], edx
     mov [cpu_vendor + 8], ecx
+
     mov byte [cpu_vendor + 12], 0
+
 
     ; -----------------------------------------
     ; CPUID Basic Information
@@ -108,12 +135,15 @@ clear_screen:
     mov ebx, eax
     shr ebx, 8
     and ebx, 0x0F
+
     mov [cpu_family], ebx
 
     mov ebx, eax
     shr ebx, 4
     and ebx, 0x0F
+
     mov [cpu_model], ebx
+
 
     ; -----------------------------------------
     ; Display System Information
@@ -170,6 +200,7 @@ clear_screen:
     mov eax, [cpu_model]
     call print_hex
 
+
     ; -----------------------------------------
     ; Serial CPU information
     ; -----------------------------------------
@@ -190,6 +221,7 @@ clear_screen:
 
     call serial_newline
 
+
     ; -----------------------------------------
     ; Initialize IDT gates
     ; -----------------------------------------
@@ -204,7 +236,9 @@ clear_screen:
     mov byte [idt_start + 5], 0x8E
 
     shr eax, 16
+
     mov word [idt_start + 6], ax
+
 
     ; Vector 14 -> page fault
 
@@ -216,7 +250,9 @@ clear_screen:
     mov byte [idt_start + 14 * 8 + 5], 0x8E
 
     shr eax, 16
+
     mov word [idt_start + 14 * 8 + 6], ax
+
 
     ; Vector 32 -> Timer
 
@@ -228,7 +264,9 @@ clear_screen:
     mov byte [idt_start + 32 * 8 + 5], 0x8E
 
     shr eax, 16
+
     mov word [idt_start + 32 * 8 + 6], ax
+
 
     ; Vector 33 -> Keyboard IRQ1
 
@@ -240,7 +278,9 @@ clear_screen:
     mov byte [idt_start + 33 * 8 + 5], 0x8E
 
     shr eax, 16
+
     mov word [idt_start + 33 * 8 + 6], ax
+
 
     ; -----------------------------------------
     ; Load IDT
@@ -250,6 +290,7 @@ clear_screen:
 
     mov esi, s_idt
     call serial_print
+
 
     ; -----------------------------------------
     ; Initialize PIT
@@ -264,6 +305,7 @@ clear_screen:
 
     mov al, ah
     out 0x40, al
+
 
     ; -----------------------------------------
     ; Remap PIC
@@ -291,17 +333,20 @@ clear_screen:
 
     ; Enable IRQ0 and IRQ1 on master PIC.
     ; Keep slave IRQs masked.
+
     mov al, 0xFC
     out 0x21, al
 
     mov esi, s_pic
     call serial_print
 
+
     ; -----------------------------------------
     ; Test Interrupt 0
     ; -----------------------------------------
 
     int 0
+
 
     ; -----------------------------------------
     ; Confirm IRET returned here
@@ -314,6 +359,7 @@ clear_screen:
     mov esi, s_iret
     call serial_print
 
+
     ; -----------------------------------------
     ; Boot complete
     ; -----------------------------------------
@@ -321,11 +367,26 @@ clear_screen:
     mov esi, s_bootok
     call serial_print
 
+
+    ; -----------------------------------------
+    ; Verify E820 memory map detection
+    ; -----------------------------------------
+
+    mov esi, s_e820
+    call serial_print
+
+    mov eax, [0x5000]
+    call serial_print_hex
+
+    call serial_newline
+
+
     ; -----------------------------------------
     ; Enter C kernel
     ; -----------------------------------------
 
     call kernel_main
+
 
     ; -----------------------------------------
     ; Halt kernel
@@ -335,6 +396,7 @@ kernel_halt:
 
     sti
     hlt
+
     jmp kernel_halt
 
 
@@ -342,14 +404,14 @@ kernel_halt:
 ; enter_user_mode
 ;
 ; Switch from Ring 0 (kernel) to Ring 3 (user mode).
-; This helper remains available for simple direct tests.
+;
+; C calling convention:
+;
+;   [esp + 4] = user entry address
+;   [esp + 8] = user stack top
 ; =========================================================
 
 enter_user_mode:
-
-    ; C calling convention:
-    ; [esp + 4] = user entry address
-    ; [esp + 8] = user stack top
 
     mov eax, [esp + 4]
     mov edx, [esp + 8]
@@ -357,13 +419,19 @@ enter_user_mode:
     cli
 
     mov bx, USER_DATA_SELECTOR
+
     mov ds, bx
     mov es, bx
     mov fs, bx
     mov gs, bx
 
     ; Ring 3 IRET frame:
-    ; SS, ESP, EFLAGS, CS, EIP
+    ;
+    ; SS
+    ; ESP
+    ; EFLAGS
+    ; CS
+    ; EIP
 
     push dword USER_DATA_SELECTOR
     push edx
@@ -377,23 +445,31 @@ enter_user_mode:
 ; =========================================================
 ; Position-independent user-mode test image.
 ;
-; The C kernel copies these bytes to 0x00100000, a page that is
-; mapped user-accessible. The code then writes to VGA and attempts
-; to read kernel memory at 0x00008800. The latter must fault.
+; The C kernel copies these bytes to 0x00100000.
+;
+; The code then writes to VGA and attempts to read
+; kernel memory at 0x00008800.
 ; =========================================================
 
 user_mode_code_start:
+
 user_mode_entry:
 
     mov edi, 0xB8C80
 
     call .get_ip
+
 .get_ip:
+
     pop esi
+
     add esi, user_mode_user_message - .get_ip
 
+
 .user_print:
+
     lodsb
+
     test al, al
     jz .test_kernel_access
 
@@ -402,15 +478,22 @@ user_mode_entry:
 
     jmp .user_print
 
+
 .test_kernel_access:
 
-    ; 0x8800 is inside the kernel image and is supervisor-only.
+    ; 0x8800 is inside the kernel image
+    ; and is supervisor-only.
+
     mov eax, [0x00008800]
 
+
 .user_halt:
+
     jmp .user_halt
 
-user_mode_user_message db 'USER MODE WORKED! TESTING PROTECTION...', 0
+
+user_mode_user_message db \
+    'USER MODE WORKED! TESTING PROTECTION...', 0
 
 user_mode_code_end:
 
@@ -423,7 +506,7 @@ user_mode_code_end:
 ;     void task_switch(task_context_t *old_context,
 ;                      task_context_t *new_context);
 ;
-; Context layout in task_context_t:
+; Context layout:
 ;
 ;   +0  eax
 ;   +4  ebx
@@ -463,6 +546,7 @@ task_switch:
 
     cli
 
+
     ; -----------------------------------------
     ; Save current context
     ; -----------------------------------------
@@ -491,6 +575,7 @@ task_switch:
     ; Original ESP before pushf.
     mov ecx, [esp + 12]
     add ecx, 4
+
     mov [edx + 28], ecx
 
     mov ecx, [esp + 36]
@@ -499,21 +584,25 @@ task_switch:
     mov ecx, [esp + 32]
     mov [edx + 36], ecx
 
+
     ; -----------------------------------------
-    ; Switch to the new context
+    ; Switch to new context
     ; -----------------------------------------
 
     mov ebp, eax
+
     mov esp, [ebp + 28]
 
     cmp dword [ebp + 40], USER_RING
     je task_switch_user
+
 
     ; -----------------------------------------
     ; Build Ring 0 IRET frame
     ; -----------------------------------------
 
     mov ax, KERNEL_DATA_SELECTOR
+
     mov ds, ax
     mov es, ax
     mov fs, ax
@@ -528,13 +617,15 @@ task_switch:
 
 task_switch_user:
 
-    ; User data segments are valid at CPL 3 and keep the flat
-    ; address space expected by the user test image.
+    ; User data segments are valid at CPL 3.
+
     mov ax, USER_DATA_SELECTOR
+
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
+
 
     ; -----------------------------------------
     ; Build Ring 3 IRET frame
@@ -609,12 +700,10 @@ isr0:
 ; Page Fault Handler
 ; =========================================================
 
-; Page fault handler: capture CR2 and the CPU error code,
-; report the fault, and stop execution safely.
-
 isr_page_fault:
 
     cli
+
     pushad
 
     ; CPU pushes an error code before entering this handler.
@@ -659,7 +748,9 @@ isr_page_fault:
     mov esi, memory_protection_message
     call print_string
 
+
 .page_fault_halt:
+
     hlt
     jmp .page_fault_halt
 
@@ -679,13 +770,15 @@ isr_timer:
     call print_string
 
     mov edi, 0xB87E0
+
     mov eax, [timer_ticks]
     call print_hex
 
-    ; Give the scheduler a chance on every timer tick.
+    ; Give scheduler a chance on every timer tick.
     call scheduler_tick
 
     ; End of timer interrupt.
+
     mov al, 0x20
     out 0x20, al
 
@@ -703,15 +796,18 @@ isr_keyboard:
     pushad
 
     ; Read keyboard scancode.
+
     in al, 0x60
     movzx eax, al
 
     ; Pass scancode to C.
+
     push eax
     call keyboard_handle
     add esp, 4
 
     ; Send EOI to master PIC.
+
     mov al, 0x20
     out 0x20, al
 
@@ -739,6 +835,7 @@ print_string:
 
     jmp print_string
 
+
 .done:
 
     ret
@@ -753,6 +850,7 @@ print_hex:
     mov edx, eax
     mov ecx, 8
 
+
 .hex_loop:
 
     rol edx, 4
@@ -766,9 +864,11 @@ print_hex:
     add bl, 'A' - 10
     jmp .write
 
+
 .number:
 
     add bl, '0'
+
 
 .write:
 
@@ -791,12 +891,16 @@ print_hex:
 section .data
 
 align 8
+
 kernel_gdt_start:
 
     ; Null descriptor
     dq 0x0000000000000000
 
-    ; Kernel code: base 0, limit 4 GiB, DPL 0
+
+    ; Kernel code:
+    ; base 0, limit 4 GiB, DPL 0
+
     dw 0xFFFF
     dw 0x0000
     db 0x00
@@ -804,7 +908,10 @@ kernel_gdt_start:
     db 0xCF
     db 0x00
 
-    ; Kernel data: base 0, limit 4 GiB, DPL 0
+
+    ; Kernel data:
+    ; base 0, limit 4 GiB, DPL 0
+
     dw 0xFFFF
     dw 0x0000
     db 0x00
@@ -812,7 +919,10 @@ kernel_gdt_start:
     db 0xCF
     db 0x00
 
-    ; User code: base 0, limit 4 GiB, DPL 3
+
+    ; User code:
+    ; base 0, limit 4 GiB, DPL 3
+
     dw 0xFFFF
     dw 0x0000
     db 0x00
@@ -820,7 +930,10 @@ kernel_gdt_start:
     db 0xCF
     db 0x00
 
-    ; User data: base 0, limit 4 GiB, DPL 3
+
+    ; User data:
+    ; base 0, limit 4 GiB, DPL 3
+
     dw 0xFFFF
     dw 0x0000
     db 0x00
@@ -828,13 +941,18 @@ kernel_gdt_start:
     db 0xCF
     db 0x00
 
+
 kernel_gdt_tss:
+
     ; Patched at runtime with the TSS base/limit.
     dq 0
 
+
 kernel_gdt_end:
 
+
 kernel_gdt_descriptor:
+
     dw kernel_gdt_end - kernel_gdt_start - 1
     dd kernel_gdt_start
 
@@ -859,29 +977,63 @@ interrupt_message db 'INTERRUPT 0 HANDLED!', 0
 
 timer_message db 'TIMER TICKS: ', 0
 
-page_fault_message db 'MEMORY PROTECTION: USER KERNEL ACCESS BLOCKED', 0
-page_fault_address_label db 'FAULT ADDRESS: 0x', 0
-page_fault_error_label db 'ERROR CODE: 0x', 0
-memory_protection_message db 'PROCESS ISOLATION VALIDATED!', 0
+page_fault_message \
+    db 'MEMORY PROTECTION: USER KERNEL ACCESS BLOCKED', 0
 
-s_banner db 13, 10, '[InitraOS] kernel entry, serial online', 13, 10, 0
+page_fault_address_label \
+    db 'FAULT ADDRESS: 0x', 0
 
-s_cpu db '[InitraOS] CPU vendor: ', 0
-s_cpuid db '[InitraOS] CPUID EAX: 0x', 0
+page_fault_error_label \
+    db 'ERROR CODE: 0x', 0
 
-s_idt db '[InitraOS] IDT loaded', 13, 10, 0
+memory_protection_message \
+    db 'PROCESS ISOLATION VALIDATED!', 0
 
-s_pic db '[InitraOS] PIC remapped, PIT armed', 13, 10, 0
 
-s_int0 db '[InitraOS] INT0 handler reached', 13, 10, 0
+; Serial boot markers
 
-s_iret db '[InitraOS] IRET returned to kernel', 13, 10, 0
+s_banner \
+    db 13, 10, '[InitraOS] kernel entry, serial online', 13, 10, 0
 
-s_bootok db '[InitraOS] BOOT_OK', 13, 10, 0
+s_cpu \
+    db '[InitraOS] CPU vendor: ', 0
 
-s_page_fault db '[InitraOS] Page fault handled at 0x', 0
-s_fault_address db '[InitraOS] fault address follows: ', 0
-s_isolation_ok db '[InitraOS] PROCESS_ISOLATION_OK', 13, 10, 0
+s_cpuid \
+    db '[InitraOS] CPUID EAX: 0x', 0
+
+s_idt \
+    db '[InitraOS] IDT loaded', 13, 10, 0
+
+s_pic \
+    db '[InitraOS] PIC remapped, PIT armed', 13, 10, 0
+
+s_int0 \
+    db '[InitraOS] INT0 handler reached', 13, 10, 0
+
+s_iret \
+    db '[InitraOS] IRET returned to kernel', 13, 10, 0
+
+s_bootok \
+    db '[InitraOS] BOOT_OK', 13, 10, 0
+
+
+; E820 validation marker
+
+s_e820 \
+    db '[InitraOS] E820 entries: ', 0
+
+
+; Page fault / isolation markers
+
+s_page_fault \
+    db '[InitraOS] Page fault handled at 0x', 0
+
+s_fault_address \
+    db '[InitraOS] fault address follows: ', 0
+
+s_isolation_ok \
+    db '[InitraOS] PROCESS_ISOLATION_OK', 13, 10, 0
+section .data
 
 global cpu_vendor
 global page_fault_address
@@ -903,38 +1055,52 @@ page_fault_address dd 0
 
 ; =========================================================
 ; IDT
-; 256 entries x 8 bytes. Cleared by the kernel at boot.
+; 256 entries x 8 bytes.
+; =========================================================
+
+; =========================================================
+; IDT
+; 256 entries x 8 bytes.
 ; =========================================================
 
 section .bss
 
 align 8
+
 idt_start:
+
     resb 256 * 8
 
 idt_end:
 
+
 section .data
 
 idt_descriptor:
+
     dw idt_end - idt_start - 1
     dd idt_start
 
-
-section .bss
 
 ; =========================================================
 ; TSS and dedicated Ring 0 stack
 ; =========================================================
 
+section .bss
+
 align 16
+
 tss_start:
+
     resb 104
 
 tss_end:
 
+
 alignb 16
+
 tss_kernel_stack:
+
     resb 4096
 
 tss_kernel_stack_top:
@@ -945,4 +1111,5 @@ tss_kernel_stack_top:
 ; =========================================================
 
 section .text
+
 %include "serial.inc"

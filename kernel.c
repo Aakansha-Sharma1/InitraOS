@@ -290,6 +290,8 @@ static void *heap_realloc(
 
 #define PAGE_TABLE_COUNT     4
 
+#define E820_COUNT_ADDRESS 0x00005000
+
 static unsigned int page_directory[1024]
     __attribute__((aligned(4096)));
 
