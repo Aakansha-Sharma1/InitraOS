@@ -1168,10 +1168,10 @@ global kernel64_entry
 
 kernel64_entry:
 
-    ; 64-bit kernel entry reached.
-    ; Keep this entry minimal for Issue #82.
-
-    cli
+    ; #82: prove that the 64-bit kernel entry point was reached.
+    mov dx, 0x3F8
+    mov al, '6'
+    out dx, al
 
 .kernel64_halt:
 
