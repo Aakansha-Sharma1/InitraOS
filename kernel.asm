@@ -1175,6 +1175,9 @@ global kernel64_entry
 
 kernel64_entry:
 
+    ; #85: establish the 64-bit kernel stack.
+    mov rsp, kernel64_stack_top
+
     ; #82: confirm that execution reached the 64-bit kernel entry.
     mov esi, s_kernel64_entry
 
@@ -1263,7 +1266,12 @@ tss_kernel_stack:
     resb 4096
 
 tss_kernel_stack_top:
+alignb 16
 
+kernel64_stack:
+    resb 4096
+
+kernel64_stack_top:
 
 ; =========================================================
 ; Includes
