@@ -14,6 +14,7 @@ bits 32
 %define USER_CODE_SELECTOR   0x1B
 %define USER_DATA_SELECTOR   0x23
 %define TSS_SELECTOR         0x28
+%define KERNEL64_CODE_SELECTOR 0x30
 
 
 ; =========================================================
@@ -1043,6 +1044,12 @@ kernel_gdt_tss:
     ; Patched at runtime with the TSS base/limit.
     dq 0
 
+    ; 64-bit kernel code:
+    ; base 0, limit 0, DPL 0
+    ; L=1, D/B=0, present, executable, readable
+    ; Selector: 0x30
+
+    dq 0x00209A0000000000
 
 kernel_gdt_end:
 
