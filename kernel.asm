@@ -15,6 +15,7 @@ bits 32
 %define USER_DATA_SELECTOR   0x23
 %define TSS_SELECTOR         0x28
 %define KERNEL64_CODE_SELECTOR 0x30
+%define KERNEL64_DATA_SELECTOR 0x38
 
 
 ; =========================================================
@@ -1050,6 +1051,13 @@ kernel_gdt_tss:
     ; Selector: 0x30
 
     dq 0x00209A0000000000
+
+; 64-bit kernel data:
+; base 0, limit 0, DPL 0
+; present, writable
+; Selector: 0x38
+
+dq 0x0020920000000000
 
 kernel_gdt_end:
 
