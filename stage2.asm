@@ -311,6 +311,9 @@ protected_mode_start:
     ; Issue #77: verify CPU long-mode support.
     call check_long_mode
 
+    ; Issue #79: build the initial 64-bit identity mapping.
+    call paging64_init
+
     mov esp, 0x90000
 
     ; Clear VGA text memory
