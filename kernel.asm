@@ -25,6 +25,8 @@ section .text
 global kernel_start
 global task_switch
 global c_print_string
+global c_serial_print
+global c_serial_print_hex
 global enter_user_mode
 global user_mode_entry
 global user_mode_code_start
@@ -657,7 +659,7 @@ task_switch_restore:
 
 
 ; =========================================================
-; C string wrapper
+; C VGA string wrapper
 ; =========================================================
 
 c_print_string:
@@ -674,6 +676,48 @@ c_print_string:
 
     pop esi
     pop edi
+
+    ret
+
+
+; =========================================================
+; C serial string wrapper
+;
+; C signature:
+;
+;     void c_serial_print(const char *message);
+; =========================================================
+
+c_serial_print:
+
+    push esi
+
+    mov esi, [esp + 8]
+
+    call serial_print
+
+    pop esi
+
+    ret
+
+
+; =========================================================
+; C serial hexadecimal wrapper
+;
+; C signature:
+;
+;     void c_serial_print_hex(unsigned int value);
+; =========================================================
+
+c_serial_print_hex:
+
+    push eax
+
+    mov eax, [esp + 8]
+
+    call serial_print_hex
+
+    pop eax
 
     ret
 
@@ -1033,6 +1077,8 @@ s_fault_address \
 
 s_isolation_ok \
     db '[InitraOS] PROCESS_ISOLATION_OK', 13, 10, 0
+
+
 section .data
 
 global cpu_vendor
@@ -1052,11 +1098,6 @@ timer_ticks dd 0
 
 page_fault_address dd 0
 
-
-; =========================================================
-; IDT
-; 256 entries x 8 bytes.
-; =========================================================
 
 ; =========================================================
 ; IDT

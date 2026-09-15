@@ -28,6 +28,7 @@ static void paging_init(void);
 static void paging_enable(void);
 static void page_directory_init(void);
 static void page_tables_init(void);
+static void frame_paging_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -67,128 +68,224 @@ static unsigned int align_up_4k(unsigned int address)
 #define E820_MAX_ENTRIES     32
 #define E820_USABLE          1
 
-static unsigned int frame_region_index = 0;
-static unsigned int frame_next_address = 0;
+#define FRAME_SIZE           0x1000
+#define FRAME_ALLOC_START    0x00200000
+#define FRAME_TRACK_LIMIT    0x08000000
+#define FRAME_BITMAP_BYTES   4096
 
-static unsigned int frame_alloc(void)
+#define USER_CODE_BASE       0x00100000
+#define USER_STACK_BASE      0x007FF000
+
+static unsigned char frame_bitmap[FRAME_BITMAP_BYTES];
+
+static unsigned int frame_bitmap_index(unsigned int frame)
 {
-    while (frame_region_index < E820_MAX_ENTRIES)
+    return (frame >> 12) >> 3;
+}
+
+static unsigned char frame_bitmap_mask(unsigned int frame)
+{
+    return (unsigned char)(1u << ((frame >> 12) & 7));
+}
+
+static int frame_is_tracked(unsigned int frame)
+{
+    if (frame < FRAME_ALLOC_START ||
+        frame >= FRAME_TRACK_LIMIT ||
+        (frame & (FRAME_SIZE - 1)) != 0)
+        return 0;
+
+    return (frame_bitmap[frame_bitmap_index(frame)] &
+            frame_bitmap_mask(frame)) != 0;
+}
+
+static void frame_mark_used(unsigned int frame)
+{
+    frame_bitmap[frame_bitmap_index(frame)] |=
+        frame_bitmap_mask(frame);
+}
+
+static void frame_mark_free(unsigned int frame)
+{
+    frame_bitmap[frame_bitmap_index(frame)] &=
+        (unsigned char)~frame_bitmap_mask(frame);
+}
+
+static int frame_in_usable_e820(unsigned int frame)
+{
+    for (unsigned int index = 0;
+         index < E820_MAX_ENTRIES;
+         index++)
     {
         unsigned int entry =
             E820_ENTRIES_ADDRESS +
-            frame_region_index * E820_ENTRY_SIZE;
+            index * E820_ENTRY_SIZE;
 
-        unsigned int base =
-            *(unsigned int *)(entry + 0);
+        unsigned int base = *(unsigned int *)(entry + 0);
+        unsigned int base_high = *(unsigned int *)(entry + 4);
+        unsigned int length = *(unsigned int *)(entry + 8);
+        unsigned int length_high = *(unsigned int *)(entry + 12);
+        unsigned int type = *(unsigned int *)(entry + 16);
 
-        unsigned int length =
-            *(unsigned int *)(entry + 8);
-
-        unsigned int type =
-            *(unsigned int *)(entry + 16);
-
-        if (type != E820_USABLE || length < 0x1000)
-        {
-            frame_region_index++;
+        if (type != E820_USABLE ||
+            base_high != 0 ||
+            length_high != 0 ||
+            length < FRAME_SIZE)
             continue;
-        }
 
-        unsigned int region_end =
-            base + length;
-
-        if (frame_next_address == 0)
-        {
-            frame_next_address =
-                align_up_4k(base);
-        }
-
-        /*
-         * Do not allocate memory already occupied
-         * by the kernel image.
-         */
-        unsigned int kernel_end =
-            align_up_4k(
-                (unsigned int)&__kernel_end
-            );
-
-        if (frame_next_address < kernel_end)
-        {
-            frame_next_address =
-                kernel_end;
-        }
-
-        /*
-         * Return one 4 KiB physical frame.
-         */
-        if (frame_next_address + 0x1000 <= region_end)
-        {
-            unsigned int frame =
-                frame_next_address;
-
-            frame_next_address += 0x1000;
-
-            return frame;
-        }
-
-        /*
-         * Current usable region is exhausted.
-         * Continue with the next E820 region.
-         */
-        frame_region_index++;
-        frame_next_address = 0;
+        if (frame >= base &&
+            frame - base <= length - FRAME_SIZE)
+            return 1;
     }
 
     return 0;
 }
 
+static int frame_is_reserved(unsigned int frame)
+{
+    unsigned int kernel_start = 0x00008800;
+    unsigned int kernel_end =
+        align_up_4k((unsigned int)&__kernel_end);
 
-/* ---------- Physical Frame Allocator Test ---------- */
+    if (frame < FRAME_ALLOC_START)
+        return 1;
+
+    if (frame < kernel_end &&
+        frame + FRAME_SIZE > kernel_start)
+        return 1;
+
+    if (frame == USER_CODE_BASE ||
+        frame == USER_STACK_BASE)
+        return 1;
+
+    return 0;
+}
+
+static unsigned int frame_alloc(void)
+{
+    for (unsigned int frame = FRAME_ALLOC_START;
+         frame < FRAME_TRACK_LIMIT;
+         frame += FRAME_SIZE)
+    {
+        if (!frame_in_usable_e820(frame) ||
+            frame_is_reserved(frame) ||
+            frame_is_tracked(frame))
+            continue;
+
+        frame_mark_used(frame);
+        return frame;
+    }
+
+    return 0;
+}
+
+static int frame_free(unsigned int frame)
+{
+    if (!frame_is_tracked(frame))
+        return 0;
+
+    if (!frame_in_usable_e820(frame) ||
+        frame_is_reserved(frame))
+        return 0;
+
+    frame_mark_free(frame);
+    return 1;
+}
 
 static void frame_allocator_test(void)
 {
-    unsigned int frame1 =
-        frame_alloc();
+    unsigned int frame1 = frame_alloc();
+    unsigned int frame2 = frame_alloc();
 
-    unsigned int frame2 =
-        frame_alloc();
-
-    if (frame1 == 0 || frame2 == 0)
+    if (frame1 == 0 || frame2 == 0 ||
+        (frame1 & (FRAME_SIZE - 1)) != 0 ||
+        (frame2 & (FRAME_SIZE - 1)) != 0 ||
+        frame1 == frame2)
     {
-        c_serial_print(
-            "[InitraOS] FRAME_ALLOC_FAIL\n"
-        );
-
+        c_serial_print("[InitraOS] FRAME_ALLOC_FAIL\n");
         return;
     }
 
-    if ((frame1 & 0xFFF) != 0 ||
-        (frame2 & 0xFFF) != 0 ||
-        frame2 != frame1 + 0x1000)
-    {
-        c_serial_print(
-            "[InitraOS] FRAME_ALLOC_FAIL\n"
-        );
-
-        return;
-    }
-
-    c_serial_print(
-        "[InitraOS] FRAME_ALLOC_OK\n"
-    );
-
-    c_serial_print(
-        "[InitraOS] FRAME1: 0x"
-    );
-
+    c_serial_print("[InitraOS] FRAME_ALLOC_OK\n");
+    c_serial_print("[InitraOS] FRAME1: 0x");
     c_serial_print_hex(frame1);
-
-    c_serial_print(
-        "\n[InitraOS] FRAME2: 0x"
-    );
-
+    c_serial_print("\n[InitraOS] FRAME2: 0x");
     c_serial_print_hex(frame2);
-
     c_serial_print("\n");
+
+    if (!frame_is_tracked(frame1) ||
+        !frame_is_tracked(frame2))
+    {
+        c_serial_print("[InitraOS] FRAME_TRACK_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] FRAME_TRACK_OK\n");
+
+    if (!frame_free(frame1) || frame_is_tracked(frame1))
+    {
+        c_serial_print("[InitraOS] FRAME_FREE_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] FRAME_FREE_OK\n");
+
+    unsigned int reused = frame_alloc();
+    if (reused != frame1 || !frame_is_tracked(reused))
+    {
+        c_serial_print("[InitraOS] FRAME_REUSE_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] FRAME_REUSE_OK\n");
+    frame_free(reused);
+    frame_free(frame2);
+}
+
+static void frame_protection_test(void)
+{
+    unsigned int kernel_frame = align_up_4k(0x00008800);
+    unsigned int low_frame = 0x00001000;
+    unsigned int probe = frame_alloc();
+
+    if (!frame_is_reserved(low_frame) ||
+        !frame_is_reserved(kernel_frame) ||
+        !frame_is_reserved(USER_CODE_BASE) ||
+        !frame_is_reserved(USER_STACK_BASE) ||
+        probe == 0)
+    {
+        if (probe != 0)
+            frame_free(probe);
+        c_serial_print("[InitraOS] FRAME_PROTECT_FAIL\n");
+        return;
+    }
+
+    frame_free(probe);
+    c_serial_print("[InitraOS] FRAME_PROTECT_OK\n");
+}
+
+static void frame_validation_test(void)
+{
+    unsigned int frame = frame_alloc();
+
+    if (frame == 0 ||
+        (frame & (FRAME_SIZE - 1)) != 0 ||
+        frame < FRAME_ALLOC_START ||
+        frame >= FRAME_TRACK_LIMIT ||
+        !frame_in_usable_e820(frame) ||
+        !frame_is_tracked(frame))
+    {
+        c_serial_print("[InitraOS] FRAME_VALIDATION_FAIL\n");
+        return;
+    }
+
+    if (!frame_free(frame) || frame_is_tracked(frame))
+    {
+        c_serial_print("[InitraOS] FRAME_VALIDATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] FRAME_VALIDATION_OK\n");
 }
 
 
@@ -421,8 +518,6 @@ static void *heap_realloc(
 #define PROCESS_SPACE_START 0x00100000
 #define PROCESS_SPACE_END   0x00800000
 
-#define USER_CODE_BASE      0x00100000
-#define USER_STACK_BASE     0x007FF000
 #define USER_STACK_TOP      0x00800000
 #define VGA_MEMORY_PAGE     0x000B8000
 #define KERNEL_TEST_ADDRESS 0x00008800
@@ -511,19 +606,10 @@ static void task_set_state(
 
 static void page_directory_init(void)
 {
-    for (unsigned int entry = 0;
-         entry < 1024;
-         entry++)
-    {
+    for (unsigned int entry = 0; entry < 1024; entry++)
         page_directory[entry] = 0;
-    }
 }
 
-
-/*
- * Build the initial identity-mapped page tables.
- * Each virtual page maps to the physical page at the same address.
- */
 static void page_tables_init(void)
 {
     for (unsigned int table = 0;
@@ -535,22 +621,14 @@ static void page_tables_init(void)
              entry++)
         {
             unsigned int address =
-                ((table * 1024) + entry) *
-                0x1000;
+                ((table * 1024) + entry) * 0x1000;
 
             page_tables[table][entry] =
-                address |
-                PAGE_PRESENT |
-                PAGE_WRITABLE;
+                address | PAGE_PRESENT | PAGE_WRITABLE;
         }
     }
 }
 
-
-/*
- * Initialize the initial address space by connecting
- * the identity-mapped page tables to the page directory.
- */
 static void paging_init(void)
 {
     page_directory_init();
@@ -562,39 +640,23 @@ static void paging_init(void)
     {
         page_directory[table] =
             (unsigned int)page_tables[table] |
-            PAGE_PRESENT |
-            PAGE_WRITABLE;
+            PAGE_PRESENT | PAGE_WRITABLE;
     }
 
     page_directory[0] |= PAGE_USER;
     page_directory[1] |= PAGE_USER;
 
-    /* Only explicitly required user pages are user accessible. */
-    page_tables[0][VGA_MEMORY_PAGE >> 12] |=
-        PAGE_USER;
+    page_tables[0][VGA_MEMORY_PAGE >> 12] |= PAGE_USER;
+    page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF] |= PAGE_USER;
+    page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF] |= PAGE_USER;
 
-    page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF] |=
-        PAGE_USER;
-
-    page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF] |=
-        PAGE_USER;
-
-    /* Keep the kernel image supervisor-only. */
     page_tables[0][KERNEL_TEST_ADDRESS >> 12] =
-        KERNEL_TEST_ADDRESS |
-        PAGE_PRESENT |
-        PAGE_WRITABLE;
+        KERNEL_TEST_ADDRESS | PAGE_PRESENT | PAGE_WRITABLE;
 }
 
-
-/*
- * Load the page directory into CR3 and enable
- * paging through the CPU's CR0.PG control bit.
- */
 static void paging_enable(void)
 {
-    unsigned int directory =
-        (unsigned int)page_directory;
+    unsigned int directory = (unsigned int)page_directory;
 
     __asm__ volatile (
         "mov %0, %%cr3\n"
@@ -607,51 +669,115 @@ static void paging_enable(void)
     );
 }
 
+static void page_invalidate(unsigned int virtual_address)
+{
+    __asm__ volatile (
+        "invlpg (%0)"
+        :
+        : "r"(virtual_address)
+        : "memory"
+    );
+}
 
-static int page_map(
-    unsigned int virtual_address,
-    unsigned int physical_address,
-    unsigned int flags
-)
+static int page_map(unsigned int virtual_address,
+                    unsigned int physical_address,
+                    unsigned int flags)
 {
     unsigned int directory_index =
         (virtual_address >> 22) & 0x3FF;
-
     unsigned int table_index =
         (virtual_address >> 12) & 0x3FF;
 
     if (directory_index >= PAGE_TABLE_COUNT)
+        return 0;
+
+    page_tables[directory_index][table_index] =
+        (physical_address & 0xFFFFF000) | (flags & 0xFFF);
+
+    page_invalidate(virtual_address);
+    return 1;
+}
+
+static int page_unmap(unsigned int virtual_address)
+{
+    unsigned int directory_index =
+        (virtual_address >> 22) & 0x3FF;
+    unsigned int table_index =
+        (virtual_address >> 12) & 0x3FF;
+
+    if (directory_index >= PAGE_TABLE_COUNT)
+        return 0;
+
+    page_tables[directory_index][table_index] = 0;
+    page_invalidate(virtual_address);
+    return 1;
+}
+
+static int page_map_new_frame(unsigned int virtual_address,
+                              unsigned int flags,
+                              unsigned int *physical_address)
+{
+    unsigned int frame = frame_alloc();
+
+    if (frame == 0)
+        return 0;
+
+    if (!page_map(virtual_address, frame, flags))
     {
+        frame_free(frame);
         return 0;
     }
 
-    page_tables[directory_index][table_index] =
-        (physical_address & 0xFFFFF000) |
-        (flags & 0xFFF);
+    if (physical_address != 0)
+        *physical_address = frame;
 
     return 1;
 }
 
-
-static int page_unmap(
-    unsigned int virtual_address
-)
+static void frame_paging_test(void)
 {
-    unsigned int directory_index =
-        (virtual_address >> 22) & 0x3FF;
+    const unsigned int test_virtual = 0x00400000;
+    const unsigned int magic = 0x1A17A05;
+    unsigned int frame = 0;
+    volatile unsigned int *test_page =
+        (volatile unsigned int *)test_virtual;
 
-    unsigned int table_index =
-        (virtual_address >> 12) & 0x3FF;
-
-    if (directory_index >= PAGE_TABLE_COUNT)
+    if (!page_map_new_frame(
+            test_virtual,
+            PAGE_PRESENT | PAGE_WRITABLE,
+            &frame))
     {
-        return 0;
+        c_serial_print("[InitraOS] FRAME_PAGING_FAIL\n");
+        return;
     }
 
-    page_tables[directory_index][table_index] =
-        0;
+    if (!frame_is_tracked(frame))
+    {
+        page_unmap(test_virtual);
+        frame_free(frame);
+        c_serial_print("[InitraOS] FRAME_PAGING_FAIL\n");
+        return;
+    }
 
-    return 1;
+    *test_page = magic;
+
+    if (*test_page != magic)
+    {
+        page_unmap(test_virtual);
+        frame_free(frame);
+        c_serial_print("[InitraOS] FRAME_PAGING_FAIL\n");
+        return;
+    }
+
+    if (!page_unmap(test_virtual) ||
+        !frame_free(frame) ||
+        frame_is_tracked(frame))
+    {
+        c_serial_print("[InitraOS] FRAME_PAGING_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] FRAME_PAGING_OK\n");
 }
 
 
@@ -1237,6 +1363,8 @@ void kernel_main(void)
      * using the E820 map prepared by Stage 2.
      */
     frame_allocator_test();
+    frame_protection_test();
+    frame_validation_test();
 
     /*
      * The kernel context is a Ring 0 context.
@@ -1379,6 +1507,7 @@ void kernel_main(void)
 
     paging_init();
     paging_enable();
+    frame_paging_test();
 
     print_at(
         13,
