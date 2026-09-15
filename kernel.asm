@@ -1183,6 +1183,7 @@ kernel64_entry:
     mov ds, ax
     mov es, ax
     mov ss, ax
+
     ; #85: start the 64-bit kernel with clean general-purpose registers.
     xor eax, eax
     xor ebx, ebx
@@ -1200,13 +1201,19 @@ kernel64_entry:
 
     lodsb
     test al, al
-    jz .kernel64_halt
+    jz .kernel64_vga
 
     mov dx, 0x3F8
     out dx, al
 
     jmp .kernel64_serial_loop
 
+
+.kernel64_vga:
+
+    mov rdi, 0xB8000
+    mov rax, 0x1F341F49
+    mov [rdi], rax
 
 .kernel64_halt:
 
