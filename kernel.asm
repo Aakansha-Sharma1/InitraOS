@@ -1178,7 +1178,22 @@ kernel64_entry:
     ; #85: establish the 64-bit kernel stack.
     mov rsp, kernel64_stack_top
 
+    ; #85: establish the 64-bit kernel data segment.
+    mov ax, KERNEL64_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    ; #85: start the 64-bit kernel with clean general-purpose registers.
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
+
     ; #82: confirm that execution reached the 64-bit kernel entry.
+
     mov esi, s_kernel64_entry
 
 .kernel64_serial_loop:
