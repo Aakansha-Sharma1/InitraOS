@@ -369,5 +369,6 @@ buffer times 64 db 0
 %include "gdt.inc"
 %include "a20.inc"
 %include "longmode.inc"
+%include "paging64.inc"
 
 times 2048-($-$$) db 0
