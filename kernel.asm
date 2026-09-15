@@ -1168,7 +1168,7 @@ s_kernel64_entry \
 ; The actual far jump is performed by the transition code.
 ; This entry only establishes the 64-bit execution point.
 ; =========================================================
-
+section .text64 progbits alloc exec
 bits 64
 
 global kernel64_entry

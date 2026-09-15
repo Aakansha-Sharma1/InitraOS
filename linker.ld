@@ -7,6 +7,7 @@ SECTIONS
     .text :
     {
         *(.text)
+        *(.text64)
     }
 
     .rodata :
@@ -24,5 +25,6 @@ SECTIONS
         *(.bss)
         *(COMMON)
     }
-        __kernel_end = .;
+
+    __kernel_end = .;
 }
