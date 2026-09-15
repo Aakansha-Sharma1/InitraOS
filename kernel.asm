@@ -971,16 +971,20 @@ enable_long_mode:
     or eax, (1 << 31)
     mov cr0, eax
 
-    ; #80 success marker.
+       ; #80 success marker.
+    ; This runs while the current compatibility-mode code segment
+    ; is still active.
     mov esi, s_long_mode_ok
     call serial_print
     call serial_newline
 
-    ; Keep execution stopped here.
-    ; Later issues will perform the 64-bit GDT/far-jump transition.
-.enable_halt:
-    hlt
-    jmp .enable_halt
+    ; #82:
+    ; Load the 64-bit kernel code segment and enter the 64-bit
+    ; kernel entry point.
+    ;
+    ; 0x30 = KERNEL64_CODE_SELECTOR
+    ; kernel64_entry = 64-bit entry point
+    jmp KERNEL64_CODE_SELECTOR:kernel64_entry
 
 ; =========================================================
 ; Kernel-owned GDT
@@ -1151,6 +1155,9 @@ s_long_mode_ok \
 s_before_pg \
     db '[InitraOS] BEFORE_PG', 13, 10, 0
 
+s_kernel64_entry \
+    db '[InitraOS] KERNEL64_ENTRY_OK', 13, 10, 0
+
 ; =========================================================
 ; Issue #82 - 64-bit kernel entry point
 ; =========================================================
@@ -1168,10 +1175,20 @@ global kernel64_entry
 
 kernel64_entry:
 
-    ; #82: prove that the 64-bit kernel entry point was reached.
+    ; #82: confirm that execution reached the 64-bit kernel entry.
+    mov esi, s_kernel64_entry
+
+.kernel64_serial_loop:
+
+    lodsb
+    test al, al
+    jz .kernel64_halt
+
     mov dx, 0x3F8
-    mov al, '6'
     out dx, al
+
+    jmp .kernel64_serial_loop
+
 
 .kernel64_halt:
 
