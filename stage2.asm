@@ -308,6 +308,9 @@ protected_mode_start:
     mov es, ax
     mov ss, ax
 
+    ; Issue #77: verify CPU long-mode support.
+    call check_long_mode
+
     mov esp, 0x90000
 
     ; Clear VGA text memory
@@ -359,9 +362,12 @@ pmode_message db 'INITRA OS - 32-bit Protected Mode: OK', 0
 
 e820_error db 'FATAL: BIOS E820 memory map failed', 13, 10, 0
 
+long_mode_error db 'FATAL: CPU does not support x86-64 long mode', 0
+
 buffer times 64 db 0
 
 %include "gdt.inc"
 %include "a20.inc"
+%include "longmode.inc"
 
 times 2048-($-$$) db 0

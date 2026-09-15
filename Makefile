@@ -24,7 +24,7 @@ all: $(BUILD)/disk.img
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/stage2.bin: stage2.asm gdt.inc a20.inc | $(BUILD)
+$(BUILD)/stage2.bin: stage2.asm gdt.inc a20.inc longmode.inc | $(BUILD)
 	$(NASM) -f bin $(NASMFLAGS) stage2.asm -o $@
 
 # Compile the C kernel source as freestanding 32-bit code.
