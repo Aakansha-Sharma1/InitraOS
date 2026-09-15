@@ -31,11 +31,11 @@ global enter_user_mode
 global user_mode_entry
 global user_mode_code_start
 global user_mode_code_end
+global enable_long_mode
 
 extern scheduler_tick
 extern kernel_main
 extern keyboard_handle
-
 
 kernel_start:
 
@@ -792,7 +792,6 @@ isr_page_fault:
     mov esi, memory_protection_message
     call print_string
 
-
 .page_fault_halt:
 
     hlt
@@ -927,6 +926,59 @@ print_hex:
 
     ret
 
+
+; =========================================================
+; Issue #80 - Enable long-mode CPU state
+; =========================================================
+
+enable_long_mode:
+
+    ; Do not allow hardware interrupts during the transition.
+    cli
+
+    ; 1. Disable current 32-bit paging.
+    mov eax, cr0
+    and eax, ~(1 << 31)
+    mov cr0, eax
+
+    ; 2. Enable PAE.
+    mov eax, cr4
+    or eax, (1 << 5)
+    mov cr4, eax
+
+    ; 3. Load the physical address of the 64-bit PML4.
+    ;    PML4 is built by paging64.inc at 0x00020000.
+    mov eax, 0x00020000
+    mov cr3, eax
+
+    ; 4. Enable IA32_EFER.LME.
+    mov ecx, 0xC0000080
+    rdmsr
+    or eax, (1 << 8)
+    wrmsr
+
+    ; Confirm prerequisites before enabling paging.
+    mov esi, s_before_pg
+    call serial_print
+    call serial_newline
+
+    ; 5. Re-enable paging.
+    ;    EFER.LME=1 + CR4.PAE=1 + CR0.PG=1
+    ;    puts the CPU into IA-32e mode.
+    mov eax, cr0
+    or eax, (1 << 31)
+    mov cr0, eax
+
+    ; #80 success marker.
+    mov esi, s_long_mode_ok
+    call serial_print
+    call serial_newline
+
+    ; Keep execution stopped here.
+    ; Later issues will perform the 64-bit GDT/far-jump transition.
+.enable_halt:
+    hlt
+    jmp .enable_halt
 
 ; =========================================================
 ; Kernel-owned GDT
@@ -1078,6 +1130,40 @@ s_fault_address \
 s_isolation_ok \
     db '[InitraOS] PROCESS_ISOLATION_OK', 13, 10, 0
 
+s_long_mode_ok \
+    db '[InitraOS] LONG_MODE_ENABLED_OK', 13, 10, 0
+
+s_before_pg \
+    db '[InitraOS] BEFORE_PG', 13, 10, 0
+
+; =========================================================
+; Issue #82 - 64-bit kernel entry point
+; =========================================================
+;
+; This is the first instruction entry executed after the
+; CPU performs the far jump into the 64-bit code segment.
+;
+; The actual far jump is performed by the transition code.
+; This entry only establishes the 64-bit execution point.
+; =========================================================
+
+bits 64
+
+global kernel64_entry
+
+kernel64_entry:
+
+    ; 64-bit kernel entry reached.
+    ; Keep this entry minimal for Issue #82.
+
+    cli
+
+.kernel64_halt:
+
+    hlt
+    jmp .kernel64_halt
+
+bits 32
 
 section .data
 

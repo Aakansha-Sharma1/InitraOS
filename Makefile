@@ -13,7 +13,7 @@ CC         ?= gcc
 LD         ?= ld
 OBJCOPY    ?= objcopy
 PYTHON     ?= python3
-QEMU       ?= qemu-system-i386
+QEMU       ?= qemu-system-x86_64
 BUILD      := build
 NASMFLAGS  ?=
 

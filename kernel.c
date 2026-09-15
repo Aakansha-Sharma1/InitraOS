@@ -23,6 +23,7 @@ extern void enter_user_mode(
 extern void user_mode_entry(void);
 extern unsigned char user_mode_code_start[];
 extern unsigned char user_mode_code_end[];
+extern void enable_long_mode(void);
 
 static void paging_init(void);
 static void paging_enable(void);
@@ -1508,7 +1509,7 @@ void kernel_main(void)
     paging_init();
     paging_enable();
     frame_paging_test();
-
+    enable_long_mode();
     print_at(
         13,
         0,
