@@ -30,6 +30,7 @@ static void paging_enable(void);
 static void page_directory_init(void);
 static void page_tables_init(void);
 static void frame_paging_test(void);
+static void dynamic_page_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -781,6 +782,89 @@ static void frame_paging_test(void)
     c_serial_print("[InitraOS] FRAME_PAGING_OK\n");
 }
 
+static void dynamic_page_test(void)
+{
+    const unsigned int page1_virtual = 0x00500000;
+    const unsigned int page2_virtual = 0x00501000;
+
+    const unsigned int magic1 = 0xD94A0001;
+    const unsigned int magic2 = 0xD94A0002;
+
+    unsigned int frame1 = 0;
+    unsigned int frame2 = 0;
+
+    volatile unsigned int *page1 =
+        (volatile unsigned int *)page1_virtual;
+
+    volatile unsigned int *page2 =
+        (volatile unsigned int *)page2_virtual;
+
+    if (!page_map_new_frame(
+            page1_virtual,
+            PAGE_PRESENT | PAGE_WRITABLE,
+            &frame1) ||
+        !page_map_new_frame(
+            page2_virtual,
+            PAGE_PRESENT | PAGE_WRITABLE,
+            &frame2))
+    {
+        if (frame1 != 0)
+        {
+            page_unmap(page1_virtual);
+            frame_free(frame1);
+        }
+
+        if (frame2 != 0)
+        {
+            page_unmap(page2_virtual);
+            frame_free(frame2);
+        }
+
+        c_serial_print("[InitraOS] DYNAMIC_PAGE_FAIL\n");
+        return;
+    }
+
+    if (frame1 == frame2 ||
+        !frame_is_tracked(frame1) ||
+        !frame_is_tracked(frame2))
+    {
+        page_unmap(page1_virtual);
+        page_unmap(page2_virtual);
+        frame_free(frame1);
+        frame_free(frame2);
+
+        c_serial_print("[InitraOS] DYNAMIC_PAGE_FAIL\n");
+        return;
+    }
+
+    *page1 = magic1;
+    *page2 = magic2;
+
+    if (*page1 != magic1 ||
+        *page2 != magic2)
+    {
+        page_unmap(page1_virtual);
+        page_unmap(page2_virtual);
+        frame_free(frame1);
+        frame_free(frame2);
+
+        c_serial_print("[InitraOS] DYNAMIC_PAGE_FAIL\n");
+        return;
+    }
+
+    if (!page_unmap(page1_virtual) ||
+        !page_unmap(page2_virtual) ||
+        !frame_free(frame1) ||
+        !frame_free(frame2) ||
+        frame_is_tracked(frame1) ||
+        frame_is_tracked(frame2))
+    {
+        c_serial_print("[InitraOS] DYNAMIC_PAGE_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] DYNAMIC_PAGE_OK\n");
+}
 
 static int user_space_prepare(void)
 {
@@ -1509,6 +1593,7 @@ void kernel_main(void)
     paging_init();
     paging_enable();
     frame_paging_test();
+    dynamic_page_test();
     enable_long_mode();
     print_at(
         13,
