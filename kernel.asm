@@ -1203,8 +1203,7 @@ kernel64_entry:
     test al, al
     jz .kernel64_vga
 
-    mov dx, 0x3F8
-    out dx, al
+    call serial64_putc
 
     jmp .kernel64_serial_loop
 
@@ -1219,6 +1218,35 @@ kernel64_entry:
 
     hlt
     jmp .kernel64_halt
+
+; =========================================================
+; #87 - 64-bit serial output
+; =========================================================
+;
+; serial64_putc
+; AL = character
+;
+; Sends one character to COM1 while preserving RAX/RDX.
+; =========================================================
+serial64_putc:
+
+    push rax
+    push rdx
+
+.serial64_wait:
+
+    mov dx, COM1 + 5
+    in al, dx
+    test al, 0x20
+    jz .serial64_wait
+
+    pop rdx
+    pop rax
+
+    mov dx, COM1
+    out dx, al
+
+    ret
 
 bits 32
 
