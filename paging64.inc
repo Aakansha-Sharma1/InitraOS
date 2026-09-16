@@ -23,7 +23,15 @@ bits 32
 %define PAGE_DIRECTORY64_ADDRESS  0x00022000
 %define PAGE_TABLE64_ADDRESS      0x00023000
 
-%define PAGE_TABLE64_COUNT        8
+; #93: Explicit kernel mapping range.
+%define KERNEL_VIRTUAL_BASE       0x00000000
+%define KERNEL_PHYSICAL_BASE      0x00000000
+%define KERNEL_MAPPING_SIZE       0x01000000
+
+; Each page table maps 512 × 4 KiB = 2 MiB.
+%define PAGE64_MAPPING_SIZE       (PAGE64_ENTRIES * 0x1000)
+%define PAGE_TABLE64_COUNT        \
+    ((KERNEL_MAPPING_SIZE + PAGE64_MAPPING_SIZE - 1) / PAGE64_MAPPING_SIZE)
 
 paging64_init:
 
@@ -45,7 +53,7 @@ paging64_init:
     mov ecx, 4096
     rep stosd
 
-    ; Clear all 8 page tables.
+    ; Clear all page tables required by the kernel mapping.
     mov edi, PAGE_TABLE64_ADDRESS
     xor eax, eax
     mov ecx, (PAGE64_TABLE_SIZE * PAGE_TABLE64_COUNT) / 4
@@ -61,7 +69,7 @@ paging64_init:
         PAGE_DIRECTORY64_ADDRESS | PAGE64_FLAGS
     mov dword [PDPT_TABLE_ADDRESS + 4], 0
 
-    ; Connect 8 page-directory entries to 8 page tables.
+    ; Connect page-directory entries to the required page tables.
     mov edi, PAGE_DIRECTORY64_ADDRESS
     mov eax, PAGE_TABLE64_ADDRESS
     mov ecx, PAGE_TABLE64_COUNT
@@ -82,7 +90,7 @@ paging64_init:
     ; Fill 4096 page-table entries.
     ; 4096 × 4 KiB = 16 MiB identity mapping.
     mov edi, PAGE_TABLE64_ADDRESS
-    xor eax, eax
+    mov eax, KERNEL_PHYSICAL_BASE
     mov ecx, PAGE64_ENTRIES * PAGE_TABLE64_COUNT
 
 .fill_page_tables:
