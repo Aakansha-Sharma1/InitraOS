@@ -57,6 +57,7 @@ EXPECTED = [
     "[InitraOS] LONG_MODE_ENABLED_OK",
     "[InitraOS] KERNEL64_ENTRY_OK",
     "[InitraOS] KERNEL64_INT0_OK",
+     "[InitraOS] KERNEL64_TIMER_IRQ_OK",
 ]
 
 

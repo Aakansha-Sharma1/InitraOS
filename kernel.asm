@@ -1001,6 +1001,21 @@ enable_long_mode:
     mov dword [idt64_start + 0xE8], eax
     mov dword [idt64_start + 0xEC], eax
 
+    ; #91: Initialize 64-bit PIT timer handler (IRQ0, vector 32).
+    mov eax, isr64_timer
+
+    mov word [idt64_start + 0x200], ax
+    mov word [idt64_start + 0x202], KERNEL64_CODE_SELECTOR
+    mov byte [idt64_start + 0x204], 0
+    mov byte [idt64_start + 0x205], 0x8E
+
+    shr eax, 16
+    mov word [idt64_start + 0x206], ax
+
+    xor eax, eax
+    mov dword [idt64_start + 0x208], eax
+    mov dword [idt64_start + 0x20C], eax
+
     ; #80 success marker.
 
     ; This runs while the current compatibility-mode code segment
@@ -1198,6 +1213,9 @@ s_kernel64_page_fault \
 s_kernel64_fault_address \
     db '[InitraOS] KERNEL64_FAULT_ADDRESS: 0x', 0
 
+s_kernel64_timer \
+    db '[InitraOS] KERNEL64_TIMER_IRQ_OK', 13, 10, 0
+
 ; =========================================================
 ; Issue #82 - 64-bit kernel entry point
 ; =========================================================
@@ -1254,6 +1272,9 @@ kernel64_entry:
     ; #89: Verify 64-bit interrupt delivery and return.
     int 0
 
+    ; #91: Enable hardware interrupts after 64-bit entry validation.
+    sti
+
     ; #90: Trigger a real page fault outside the identity-mapped range.
     mov rdi, 0x01000000
     mov byte [rdi], 0x00
@@ -1288,6 +1309,34 @@ isr64_0:
     jmp .isr64_0_loop
 
 .isr64_0_done:
+
+    iretq
+
+; =========================================================
+; #91 - 64-bit PIT Timer IRQ0 Handler
+; =========================================================
+
+isr64_timer:
+
+    inc dword [timer_ticks]
+
+    mov rsi, s_kernel64_timer
+
+.isr64_timer_loop:
+
+    lodsb
+    test al, al
+    jz .isr64_timer_done
+
+    call serial64_putc
+
+    jmp .isr64_timer_loop
+
+.isr64_timer_done:
+
+    ; Send EOI to the master PIC.
+    mov al, 0x20
+    out 0x20, al
 
     iretq
 
