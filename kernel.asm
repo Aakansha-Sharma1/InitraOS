@@ -986,7 +986,23 @@ enable_long_mode:
     mov dword [idt64_start + 8], eax
     mov dword [idt64_start + 12], eax
 
-       ; #80 success marker.
+    ; #90: Initialize 64-bit page-fault handler (vector 14).
+    mov eax, isr64_page_fault
+
+    mov word [idt64_start + 0xE0], ax
+    mov word [idt64_start + 0xE2], KERNEL64_CODE_SELECTOR
+    mov byte [idt64_start + 0xE4], 0
+    mov byte [idt64_start + 0xE5], 0x8E
+
+    shr eax, 16
+    mov word [idt64_start + 0xE6], ax
+
+    xor eax, eax
+    mov dword [idt64_start + 0xE8], eax
+    mov dword [idt64_start + 0xEC], eax
+
+    ; #80 success marker.
+
     ; This runs while the current compatibility-mode code segment
     ; is still active.
     mov esi, s_long_mode_ok
@@ -1176,6 +1192,12 @@ s_kernel64_entry \
 s_kernel64_int0 \
     db '[InitraOS] KERNEL64_INT0_OK', 13, 10, 0
 
+s_kernel64_page_fault \
+    db '[InitraOS] KERNEL64_PAGE_FAULT_OK', 13, 10, 0
+
+s_kernel64_fault_address \
+    db '[InitraOS] KERNEL64_FAULT_ADDRESS: 0x', 0
+
 ; =========================================================
 ; Issue #82 - 64-bit kernel entry point
 ; =========================================================
@@ -1232,6 +1254,10 @@ kernel64_entry:
     ; #89: Verify 64-bit interrupt delivery and return.
     int 0
 
+    ; #90: Trigger a real page fault outside the identity-mapped range.
+    mov rdi, 0x01000000
+    mov byte [rdi], 0x00
+
 .kernel64_vga:
 
     mov rdi, 0xB8000
@@ -1266,6 +1292,52 @@ isr64_0:
     iretq
 
 ; =========================================================
+; #90 - 64-bit Page Fault Handler
+; =========================================================
+
+isr64_page_fault:
+
+    mov rsi, s_kernel64_page_fault
+
+.isr64_page_fault_loop:
+
+    lodsb
+    test al, al
+    jz .isr64_page_fault_done
+
+    call serial64_putc
+
+    jmp .isr64_page_fault_loop
+
+.isr64_page_fault_done:
+
+    mov rax, cr2
+
+    mov rsi, s_kernel64_fault_address
+
+.isr64_fault_address_loop:
+
+    lodsb
+    test al, al
+    jz .isr64_fault_address_done
+
+    call serial64_putc
+
+    jmp .isr64_fault_address_loop
+
+.isr64_fault_address_done:
+
+    ; Print the page-fault address from CR2.
+    call serial64_print_hex
+    call serial64_newline
+
+.isr64_page_fault_halt:
+
+    hlt
+    jmp .isr64_page_fault_halt
+
+
+; =========================================================
 ; #87 - 64-bit serial output
 ; =========================================================
 ;
@@ -1291,6 +1363,73 @@ serial64_putc:
 
     mov dx, COM1
     out dx, al
+
+    ret
+
+; =========================================================
+; #90 - 64-bit serial hexadecimal output
+; =========================================================
+;
+; serial64_print_hex
+; RAX = 64-bit value
+; Prints 16 hexadecimal digits to COM1.
+; =========================================================
+
+; =========================================================
+; 64-bit serial newline
+; =========================================================
+
+serial64_newline:
+
+    push rax
+
+    mov al, 13
+    call serial64_putc
+
+    mov al, 10
+    call serial64_putc
+
+    pop rax
+
+    ret
+
+serial64_print_hex:
+
+    push rax
+    push rbx
+    push rcx
+    push rdx
+
+    mov rbx, rax
+    mov rcx, 16
+
+.serial64_hex_loop:
+
+    rol rbx, 4
+
+    mov rax, rbx
+    and al, 0x0F
+
+    cmp al, 9
+    jbe .serial64_hex_number
+
+    add al, 'A' - 10
+    jmp .serial64_hex_write
+
+.serial64_hex_number:
+
+    add al, '0'
+
+.serial64_hex_write:
+
+    call serial64_putc
+
+    loop .serial64_hex_loop
+
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
 
     ret
 
