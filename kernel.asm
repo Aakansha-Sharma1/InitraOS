@@ -971,6 +971,21 @@ enable_long_mode:
     or eax, (1 << 31)
     mov cr0, eax
 
+    ; #89: Initialize 64-bit IDT vector 0.
+    mov eax, isr64_0
+
+    mov word [idt64_start + 0], ax
+    mov word [idt64_start + 2], KERNEL64_CODE_SELECTOR
+    mov byte [idt64_start + 4], 0
+    mov byte [idt64_start + 5], 0x8E
+
+    shr eax, 16
+    mov word [idt64_start + 6], ax
+
+    xor eax, eax
+    mov dword [idt64_start + 8], eax
+    mov dword [idt64_start + 12], eax
+
        ; #80 success marker.
     ; This runs while the current compatibility-mode code segment
     ; is still active.
@@ -1158,6 +1173,9 @@ s_before_pg \
 s_kernel64_entry \
     db '[InitraOS] KERNEL64_ENTRY_OK', 13, 10, 0
 
+s_kernel64_int0 \
+    db '[InitraOS] KERNEL64_INT0_OK', 13, 10, 0
+
 ; =========================================================
 ; Issue #82 - 64-bit kernel entry point
 ; =========================================================
@@ -1184,6 +1202,9 @@ kernel64_entry:
     mov es, ax
     mov ss, ax
 
+    ; #89: load the 64-bit IDT.
+    lidt [idt64_descriptor]
+
     ; #85: start the 64-bit kernel with clean general-purpose registers.
     xor eax, eax
     xor ebx, ebx
@@ -1201,12 +1222,15 @@ kernel64_entry:
 
     lodsb
     test al, al
-    jz .kernel64_vga
+    jz .kernel64_int0
 
     call serial64_putc
 
     jmp .kernel64_serial_loop
 
+.kernel64_int0:
+    ; #89: Verify 64-bit interrupt delivery and return.
+    int 0
 
 .kernel64_vga:
 
@@ -1218,6 +1242,28 @@ kernel64_entry:
 
     hlt
     jmp .kernel64_halt
+
+; =========================================================
+; #89 - 64-bit Interrupt 0 Handler
+; =========================================================
+
+isr64_0:
+
+    mov rsi, s_kernel64_int0
+
+.isr64_0_loop:
+
+    lodsb
+    test al, al
+    jz .isr64_0_done
+
+    call serial64_putc
+
+    jmp .isr64_0_loop
+
+.isr64_0_done:
+
+    iretq
 
 ; =========================================================
 ; #87 - 64-bit serial output
@@ -1292,6 +1338,31 @@ idt_descriptor:
 
     dw idt_end - idt_start - 1
     dd idt_start
+
+    ; =========================================================
+; 64-bit IDT
+; 256 entries x 16 bytes.
+; =========================================================
+
+section .bss
+
+align 16
+
+idt64_start:
+
+    resb 256 * 16
+
+idt64_end:
+
+
+section .data
+
+align 8
+
+idt64_descriptor:
+
+    dw idt64_end - idt64_start - 1
+    dq idt64_start
 
 
 ; =========================================================
