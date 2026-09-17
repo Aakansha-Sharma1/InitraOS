@@ -35,6 +35,8 @@ static void heap_paging_test(void);
 static void heap_free(void *address);
 static void *heap_alloc_paged(unsigned int size);
 static void heap_dynamic_test(void);
+static void page_protection_test(void);
+static void page_user_protection_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -1239,6 +1241,104 @@ static void dynamic_page_test(void)
     c_serial_print("[InitraOS] DYNAMIC_PAGE_OK\n");
 }
 
+static void page_protection_test(void)
+{
+    const unsigned int test_virtual = 0x00502000;
+
+    unsigned int frame = 0;
+
+    if (!page_map_new_frame(
+            test_virtual,
+            PAGE_PRESENT,
+            &frame))
+    {
+        c_serial_print(
+            "[InitraOS] PAGE_PROTECTION_FAIL\n");
+        return;
+    }
+
+    unsigned int directory_index =
+        (test_virtual >> 22) & 0x3FF;
+
+    unsigned int table_index =
+        (test_virtual >> 12) & 0x3FF;
+
+    unsigned int entry =
+        page_tables[directory_index][table_index];
+
+    if (frame == 0 ||
+        !frame_is_tracked(frame) ||
+        (entry & PAGE_PRESENT) == 0 ||
+        (entry & PAGE_WRITABLE) != 0)
+    {
+        page_unmap(test_virtual);
+
+        if (frame != 0)
+        {
+            frame_free(frame);
+        }
+
+        c_serial_print(
+            "[InitraOS] PAGE_PROTECTION_FAIL\n");
+        return;
+    }
+
+    if (!page_unmap(test_virtual) ||
+        !frame_free(frame) ||
+        frame_is_tracked(frame))
+    {
+        c_serial_print(
+            "[InitraOS] PAGE_PROTECTION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PAGE_PROTECTION_OK\n");
+}
+
+
+static void page_user_protection_test(void)
+{
+    unsigned int user_code_entry =
+        page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF];
+
+    unsigned int user_stack_entry =
+        page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF];
+
+    unsigned int kernel_entry =
+        page_tables[0][KERNEL_TEST_ADDRESS >> 12];
+
+    if ((user_code_entry &
+         (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)) !=
+        (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PAGE_USER_PROTECTION_FAIL\n");
+        return;
+    }
+
+    if ((user_stack_entry &
+         (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)) !=
+        (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PAGE_USER_PROTECTION_FAIL\n");
+        return;
+    }
+
+    if ((kernel_entry &
+         (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)) !=
+        (PAGE_PRESENT | PAGE_WRITABLE))
+    {
+        c_serial_print(
+            "[InitraOS] PAGE_USER_PROTECTION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PAGE_USER_PROTECTION_OK\n");
+}
+
 static void heap_paging_test(void)
 {
     const unsigned int heap_page_virtual = 0x00600000;
@@ -2119,6 +2219,8 @@ void kernel_main(void)
     heap_paging_enabled = 1;
     frame_paging_test();
     dynamic_page_test();
+    page_protection_test();
+    page_user_protection_test();
     heap_paging_test();
     heap_dynamic_test();
     enable_long_mode();
