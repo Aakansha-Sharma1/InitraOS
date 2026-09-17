@@ -913,6 +913,29 @@ static unsigned int page_directory[1024]
 static unsigned int page_tables[PAGE_TABLE_COUNT][1024]
     __attribute__((aligned(4096)));
 
+/* ---------- Process Architecture ---------- */
+
+typedef struct process_address_space
+{
+    unsigned int page_directory;
+} process_address_space_t;
+
+
+typedef struct process
+{
+    unsigned int pid;
+    unsigned int state;
+    unsigned int privilege;
+
+    process_address_space_t *address_space;
+
+    struct task *task;
+} process_t;
+
+
+/* ---------- Task Architecture ---------- */
+
+typedef struct task_context task_context_t;
 
 typedef struct task_context task_context_t;
 
