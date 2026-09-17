@@ -34,6 +34,7 @@ static void dynamic_page_test(void);
 static void heap_paging_test(void);
 static void heap_free(void *address);
 static void *heap_alloc_paged(unsigned int size);
+static void *heap_alloc_paged_aligned(unsigned int size);
 static void heap_dynamic_test(void);
 static void page_protection_test(void);
 static void page_user_protection_test(void);
@@ -422,6 +423,107 @@ static void *heap_alloc_paged(unsigned int size)
 
     return (void *)address;
 }
+
+static void *heap_alloc_paged_aligned(unsigned int size)
+{
+    if (size == 0)
+    {
+        return 0;
+    }
+
+    size = (size + 3) & ~3;
+
+    paged_heap_block_t *slot = 0;
+
+    for (unsigned int index = 0;
+         index < HEAP_PAGED_MAX_BLOCKS;
+         index++)
+    {
+        if (paged_heap_blocks[index].free == 1 ||
+            paged_heap_blocks[index].address == 0)
+        {
+            slot = &paged_heap_blocks[index];
+            break;
+        }
+    }
+
+    if (slot == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Keep the normal heap header immediately before
+     * the returned address, but align the returned
+     * payload itself to a 4 KiB boundary.
+     */
+    unsigned int address =
+        align_up_4k(
+            heap_pointer +
+            sizeof(heap_block_t)
+        );
+
+    unsigned int block_start =
+        address -
+        sizeof(heap_block_t);
+
+    unsigned int end =
+        address + size;
+
+    if (block_start < HEAP_PAGED_BASE)
+    {
+        return 0;
+    }
+
+    if (end < address ||
+        end > HEAP_PAGED_LIMIT)
+    {
+        return 0;
+    }
+
+    unsigned int mapped_page_count = 0;
+
+    for (unsigned int page =
+             block_start & ~(HEAP_PAGE_SIZE - 1);
+         page < end;
+         page += HEAP_PAGE_SIZE)
+    {
+        if (!heap_map_page(page))
+        {
+            for (unsigned int cleanup_page =
+                     block_start &
+                     ~(HEAP_PAGE_SIZE - 1);
+                 cleanup_page <
+                     block_start +
+                     mapped_page_count *
+                         HEAP_PAGE_SIZE;
+                 cleanup_page += HEAP_PAGE_SIZE)
+            {
+                heap_unmap_page(cleanup_page);
+            }
+
+            return 0;
+        }
+
+        mapped_page_count++;
+    }
+
+    heap_block_t *block =
+        (heap_block_t *)block_start;
+
+    block->size = size;
+    block->free = 0;
+    block->next = 0;
+
+    slot->address = address;
+    slot->size = size;
+    slot->free = 0;
+
+    heap_pointer = end;
+
+    return (void *)address;
+}
+
 
 static void *heap_alloc(unsigned int size)
 {
@@ -917,9 +1019,12 @@ static unsigned int page_tables[PAGE_TABLE_COUNT][1024]
 
 typedef struct process_address_space
 {
-    unsigned int page_directory;
+    unsigned int *page_directory;
+    unsigned int (*page_tables)[1024];
+    unsigned int page_table_count;
 } process_address_space_t;
 
+static process_address_space_t *address_space_create(void);
 
 typedef struct process
 {
@@ -936,9 +1041,6 @@ typedef struct process
 /* ---------- Task Architecture ---------- */
 
 typedef struct task_context task_context_t;
-
-typedef struct task_context task_context_t;
-
 
 typedef struct task
 {
@@ -1004,6 +1106,8 @@ static void task_set_state(
 
 /* ---------- Paging ---------- */
 
+static process_address_space_t kernel_address_space;
+
 static void page_directory_init(void)
 {
     for (unsigned int entry = 0; entry < 1024; entry++)
@@ -1029,6 +1133,13 @@ static void page_tables_init(void)
     }
 }
 
+static void address_space_init(
+    process_address_space_t *address_space,
+    unsigned int *directory,
+    unsigned int (*tables)[1024],
+    unsigned int table_count
+);
+
 static void paging_init(void)
 {
     page_directory_init();
@@ -1052,11 +1163,109 @@ static void paging_init(void)
 
     page_tables[0][KERNEL_TEST_ADDRESS >> 12] =
         KERNEL_TEST_ADDRESS | PAGE_PRESENT | PAGE_WRITABLE;
+
+    address_space_init(
+    &kernel_address_space,
+    page_directory,
+    page_tables,
+    PAGE_TABLE_COUNT
+);
+}
+
+static void address_space_init(
+    process_address_space_t *address_space,
+    unsigned int *directory,
+    unsigned int (*tables)[1024],
+    unsigned int table_count
+)
+{
+    if (address_space == 0)
+    {
+        return;
+    }
+
+    address_space->page_directory = directory;
+    address_space->page_tables = tables;
+    address_space->page_table_count = table_count;
+}
+
+static process_address_space_t *address_space_create(void)
+{
+    process_address_space_t *address_space =
+        (process_address_space_t *)heap_alloc(
+            sizeof(process_address_space_t)
+        );
+
+    if (address_space == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Page directories and page tables must themselves
+     * be 4 KiB aligned because they will eventually be
+     * loaded into CR3.
+     */
+    address_space->page_directory =
+        (unsigned int *)heap_alloc_paged_aligned(
+            1024 * sizeof(unsigned int)
+        );
+
+    if (address_space->page_directory == 0)
+    {
+        heap_free(address_space);
+        return 0;
+    }
+
+    for (unsigned int entry = 0;
+         entry < 1024;
+         entry++)
+    {
+        address_space->page_directory[entry] = 0;
+    }
+
+    address_space->page_tables =
+        (unsigned int (*)[1024])
+        heap_alloc_paged_aligned(
+            PAGE_TABLE_COUNT *
+            1024 *
+            sizeof(unsigned int)
+        );
+
+    if (address_space->page_tables == 0)
+    {
+        heap_free(address_space->page_directory);
+        heap_free(address_space);
+        return 0;
+    }
+
+    for (unsigned int table = 0;
+         table < PAGE_TABLE_COUNT;
+         table++)
+    {
+        for (unsigned int entry = 0;
+             entry < 1024;
+             entry++)
+        {
+            address_space->page_tables[table][entry] = 0;
+        }
+
+        address_space->page_directory[table] =
+            (unsigned int)address_space->page_tables[table] |
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
+    }
+
+    address_space->page_table_count =
+        PAGE_TABLE_COUNT;
+
+    return address_space;
 }
 
 static void paging_enable(void)
 {
-    unsigned int directory = (unsigned int)page_directory;
+    unsigned int directory =
+        (unsigned int)kernel_address_space.page_directory;
 
     __asm__ volatile (
         "mov %0, %%cr3\n"
@@ -1069,6 +1278,90 @@ static void paging_enable(void)
     );
 }
 
+static void address_space_create_test(void)
+{
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_START\n");
+
+    process_address_space_t *address_space =
+        address_space_create();
+
+    if (address_space == 0)
+    {
+        c_serial_print(
+            "[InitraOS] ADDRESS_SPACE_CREATE_FAIL_ALLOC\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_ALLOC_OK\n");
+
+    if (address_space->page_directory == 0 ||
+        address_space->page_tables == 0 ||
+        address_space->page_table_count != PAGE_TABLE_COUNT)
+    {
+        c_serial_print(
+            "[InitraOS] ADDRESS_SPACE_CREATE_FAIL_META\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_META_OK\n");
+
+    for (unsigned int table = 0;
+         table < PAGE_TABLE_COUNT;
+         table++)
+    {
+        unsigned int expected =
+            ((unsigned int)address_space->page_tables[table] &
+             0xFFFFF000) |
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
+
+        if (address_space->page_directory[table] != expected)
+        {
+            c_serial_print(
+                "[InitraOS] ADDRESS_SPACE_CREATE_FAIL_DIRECTORY\n");
+
+            c_serial_print_hex(
+                (unsigned int)address_space->page_tables[table]);
+
+            c_serial_print_hex(
+                address_space->page_directory[table]);
+
+            c_serial_print_hex(
+                expected);
+
+            return;
+        }
+    }
+
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_DIRECTORY_OK\n");
+
+    for (unsigned int table = 0;
+         table < PAGE_TABLE_COUNT;
+         table++)
+    {
+        if (address_space->page_tables[table][0] != 0)
+        {
+            c_serial_print(
+                "[InitraOS] ADDRESS_SPACE_CREATE_FAIL_TABLES\n");
+            return;
+        }
+    }
+
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_TABLES_OK\n");
+
+    heap_free(address_space->page_tables);
+    heap_free(address_space->page_directory);
+    heap_free(address_space);
+
+    c_serial_print(
+        "[InitraOS] ADDRESS_SPACE_CREATE_OK\n");
+}
+
 static void page_invalidate(unsigned int virtual_address)
 {
     __asm__ volatile (
@@ -1079,38 +1372,90 @@ static void page_invalidate(unsigned int virtual_address)
     );
 }
 
-static int page_map(unsigned int virtual_address,
-                    unsigned int physical_address,
-                    unsigned int flags)
+static int page_map_in_address_space(
+    process_address_space_t *address_space,
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags
+)
 {
     unsigned int directory_index =
         (virtual_address >> 22) & 0x3FF;
+
     unsigned int table_index =
         (virtual_address >> 12) & 0x3FF;
 
-    if (directory_index >= PAGE_TABLE_COUNT)
+    if (address_space == 0 ||
+        address_space->page_tables == 0)
+    {
         return 0;
+    }
 
-    page_tables[directory_index][table_index] =
-        (physical_address & 0xFFFFF000) | (flags & 0xFFF);
+    if (directory_index >= address_space->page_table_count)
+    {
+        return 0;
+    }
+
+    address_space->page_tables[directory_index][table_index] =
+        (physical_address & 0xFFFFF000) |
+        (flags & 0xFFF);
 
     page_invalidate(virtual_address);
+
     return 1;
 }
 
-static int page_unmap(unsigned int virtual_address)
+static int page_map(
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags
+)
+{
+    return page_map_in_address_space(
+        &kernel_address_space,
+        virtual_address,
+        physical_address,
+        flags
+    );
+}
+
+static int page_unmap_in_address_space(
+    process_address_space_t *address_space,
+    unsigned int virtual_address
+)
 {
     unsigned int directory_index =
         (virtual_address >> 22) & 0x3FF;
+
     unsigned int table_index =
         (virtual_address >> 12) & 0x3FF;
 
-    if (directory_index >= PAGE_TABLE_COUNT)
+    if (address_space == 0 ||
+        address_space->page_tables == 0)
+    {
         return 0;
+    }
 
-    page_tables[directory_index][table_index] = 0;
+    if (directory_index >= address_space->page_table_count)
+    {
+        return 0;
+    }
+
+    address_space->page_tables[directory_index][table_index] = 0;
+
     page_invalidate(virtual_address);
+
     return 1;
+}
+
+static int page_unmap(
+    unsigned int virtual_address
+)
+{
+    return page_unmap_in_address_space(
+        &kernel_address_space,
+        virtual_address
+    );
 }
 
 static int page_map_new_frame(unsigned int virtual_address,
@@ -1287,7 +1632,7 @@ static void page_protection_test(void)
         (test_virtual >> 12) & 0x3FF;
 
     unsigned int entry =
-        page_tables[directory_index][table_index];
+    kernel_address_space.page_tables[directory_index][table_index];
 
     if (frame == 0 ||
         !frame_is_tracked(frame) ||
@@ -1323,13 +1668,13 @@ static void page_protection_test(void)
 static void page_user_protection_test(void)
 {
     unsigned int user_code_entry =
-        page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF];
+    kernel_address_space.page_tables[0][(USER_CODE_BASE >> 12) & 0x3FF];
 
     unsigned int user_stack_entry =
-        page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF];
+    kernel_address_space.page_tables[1][(USER_STACK_BASE >> 12) & 0x3FF];
 
     unsigned int kernel_entry =
-        page_tables[0][KERNEL_TEST_ADDRESS >> 12];
+    kernel_address_space.page_tables[0][KERNEL_TEST_ADDRESS >> 12];
 
     if ((user_code_entry &
          (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)) !=
@@ -1464,7 +1809,7 @@ static int heap_unmap_page(unsigned int virtual_address)
     }
 
     unsigned int entry =
-        page_tables[directory_index][table_index];
+        kernel_address_space.page_tables[directory_index][table_index];
 
     if ((entry & PAGE_PRESENT) == 0)
     {
@@ -1482,7 +1827,8 @@ static int heap_unmap_page(unsigned int virtual_address)
     return frame_free(frame);
 }
 
-static unsigned int page_get_physical(
+static unsigned int page_get_physical_in_address_space(
+    process_address_space_t *address_space,
     unsigned int virtual_address
 )
 {
@@ -1492,18 +1838,24 @@ static unsigned int page_get_physical(
     unsigned int table_index =
         (virtual_address >> 12) & 0x3FF;
 
+    if (address_space == 0 ||
+        address_space->page_tables == 0)
+    {
+        return 0;
+    }
+
     if ((virtual_address & (FRAME_SIZE - 1)) != 0)
     {
         return 0;
     }
 
-    if (directory_index >= PAGE_TABLE_COUNT)
+    if (directory_index >= address_space->page_table_count)
     {
         return 0;
     }
 
     unsigned int entry =
-        page_tables[directory_index][table_index];
+        address_space->page_tables[directory_index][table_index];
 
     if ((entry & PAGE_PRESENT) == 0)
     {
@@ -1511,6 +1863,16 @@ static unsigned int page_get_physical(
     }
 
     return entry & 0xFFFFF000;
+}
+
+static unsigned int page_get_physical(
+    unsigned int virtual_address
+)
+{
+    return page_get_physical_in_address_space(
+        &kernel_address_space,
+        virtual_address
+    );
 }
 
 static int user_space_prepare(void)
@@ -2240,6 +2602,7 @@ void kernel_main(void)
     paging_init();
     paging_enable();
     heap_paging_enabled = 1;
+    address_space_create_test();
     frame_paging_test();
     dynamic_page_test();
     page_protection_test();

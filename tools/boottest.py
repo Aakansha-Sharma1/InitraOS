@@ -52,6 +52,7 @@ EXPECTED = [
     "[InitraOS] FRAME_REUSE_OK",
     "[InitraOS] FRAME_PROTECT_OK",
     "[InitraOS] FRAME_VALIDATION_OK",
+    "[InitraOS] ADDRESS_SPACE_CREATE_OK",
     "[InitraOS] FRAME_PAGING_OK",
     "[InitraOS] DYNAMIC_PAGE_OK",
     "[InitraOS] PAGE_PROTECTION_OK",
@@ -62,7 +63,7 @@ EXPECTED = [
     "[InitraOS] LONG_MODE_ENABLED_OK",
     "[InitraOS] KERNEL64_ENTRY_OK",
     "[InitraOS] KERNEL64_INT0_OK",
-     "[InitraOS] KERNEL64_TIMER_IRQ_OK",
+    "[InitraOS] KERNEL64_TIMER_IRQ_OK",
 ]
 
 
