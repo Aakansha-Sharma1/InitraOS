@@ -53,6 +53,12 @@ EXPECTED = [
     "[InitraOS] FRAME_PROTECT_OK",
     "[InitraOS] FRAME_VALIDATION_OK",
     "[InitraOS] ADDRESS_SPACE_CREATE_OK",
+    "[InitraOS] PROCESS_CREATE_START",
+    "[InitraOS] PROCESS_CREATE_PID_OK",
+    "[InitraOS] PROCESS_CREATE_STATE_OK",
+    "[InitraOS] PROCESS_CREATE_ADDRESS_SPACE_OK",
+    "[InitraOS] PROCESS_CREATE_TASK_OK",
+    "[InitraOS] PROCESS_CREATE_OK",
     "[InitraOS] USER_REGION_OK",
     "[InitraOS] USER_STACK_OK",
     "[InitraOS] FRAME_PAGING_OK",
@@ -67,7 +73,6 @@ EXPECTED = [
     "[InitraOS] KERNEL64_INT0_OK",
     "[InitraOS] KERNEL64_TIMER_IRQ_OK",
 ]
-
 
 def main():
     if not os.path.exists(IMAGE):

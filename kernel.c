@@ -40,6 +40,7 @@ static void page_protection_test(void);
 static void page_user_protection_test(void);
 static void user_stack_test(void);
 static void user_region_test(void);
+static void process_create_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -1069,6 +1070,51 @@ typedef struct process
     struct task *task;
 } process_t;
 
+static process_t *process_create(void);
+static struct task *task_create_user(void);
+static unsigned int next_process_id = 1;
+static process_t *process_create(void)
+{
+    process_t *process =
+        (process_t *)heap_alloc(
+            sizeof(process_t)
+        );
+
+    if (process == 0)
+    {
+        return 0;
+    }
+
+    process->pid =
+        next_process_id++;
+
+    process->state =
+        TASK_READY;
+
+    process->privilege =
+        TASK_USER;
+
+    process->address_space =
+        address_space_create();
+
+    if (process->address_space == 0)
+    {
+        heap_free(process);
+        return 0;
+    }
+
+    process->task =
+        task_create_user();
+
+    if (process->task == 0)
+    {
+        heap_free(process->address_space);
+        heap_free(process);
+        return 0;
+    }
+
+    return process;
+}
 
 /* ---------- Task Architecture ---------- */
 
@@ -1113,7 +1159,6 @@ extern void task_switch(
 );
 
 extern void scheduler_tick(void);
-
 
 static unsigned int next_task_id = 1;
 
@@ -1392,6 +1437,84 @@ static void address_space_create_test(void)
 
     c_serial_print(
         "[InitraOS] ADDRESS_SPACE_CREATE_OK\n");
+}
+
+static void process_create_test(void)
+{
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_START\n");
+
+    process_t *process =
+        process_create();
+
+    if (process == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_ALLOC\n");
+        return;
+    }
+
+    if (process->pid == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_PID\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_PID_OK\n");
+
+    if (process->state != TASK_READY ||
+        process->privilege != TASK_USER)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_STATE\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_STATE_OK\n");
+
+    if (process->address_space == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_ADDRESS_SPACE\n");
+        return;
+    }
+
+    if (process->address_space->page_directory == 0 ||
+        process->address_space->page_tables == 0 ||
+        process->address_space->page_table_count !=
+            PAGE_TABLE_COUNT)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_ADDRESS_SPACE_META\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_ADDRESS_SPACE_OK\n");
+
+    if (process->task == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_TASK\n");
+        return;
+    }
+
+    if (process->task->privilege != TASK_USER ||
+        process->task->state != TASK_READY)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_TASK_STATE\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_TASK_OK\n");
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_OK\n");
 }
 
 static void page_invalidate(unsigned int virtual_address)
@@ -2778,6 +2901,7 @@ void kernel_main(void)
     paging_enable();
     heap_paging_enabled = 1;
     address_space_create_test();
+    process_create_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
