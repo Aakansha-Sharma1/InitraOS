@@ -41,6 +41,9 @@ static void page_user_protection_test(void);
 static void user_stack_test(void);
 static void user_region_test(void);
 static void process_create_test(void);
+static void process_isolation_test(void);
+static void process_permission_isolation_test(void);
+static void process_instance_isolation_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -1439,6 +1442,300 @@ static void address_space_create_test(void)
         "[InitraOS] ADDRESS_SPACE_CREATE_OK\n");
 }
 
+static int page_map_in_address_space(
+    process_address_space_t *address_space,
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags);
+
+static int page_unmap_in_address_space(
+    process_address_space_t *address_space,
+    unsigned int virtual_address);
+
+static unsigned int page_get_physical_in_address_space(
+    process_address_space_t *address_space,
+    unsigned int virtual_address);
+
+static void process_isolation_test(void)
+{
+    const unsigned int test_virtual =
+        0x00400000;
+
+    const unsigned int frame_a =
+        0x00200000;
+
+    const unsigned int frame_b =
+        0x00201000;
+
+    process_address_space_t *space_a =
+        address_space_create();
+
+    process_address_space_t *space_b =
+        address_space_create();
+
+    if (space_a == 0 ||
+        space_b == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (space_a->page_directory ==
+            space_b->page_directory ||
+        space_a->page_tables ==
+            space_b->page_tables)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_ISOLATION_TABLES_OK\n");
+
+    if (!page_map_in_address_space(
+            space_a,
+            test_virtual,
+            frame_a,
+            PAGE_PRESENT |
+            PAGE_WRITABLE |
+            PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (!page_map_in_address_space(
+            space_b,
+            test_virtual,
+            frame_b,
+            PAGE_PRESENT |
+            PAGE_WRITABLE |
+            PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (page_get_physical_in_address_space(
+            space_a,
+            test_virtual) != frame_a)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (page_get_physical_in_address_space(
+            space_b,
+            test_virtual) != frame_b)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (frame_a == frame_b)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_ISOLATION_MAPPING_OK\n");
+
+    if (!page_unmap_in_address_space(
+            space_a,
+            test_virtual))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (page_get_physical_in_address_space(
+            space_a,
+            test_virtual) != 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (page_get_physical_in_address_space(
+            space_b,
+            test_virtual) != frame_b)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_ISOLATION_UNMAP_OK\n");
+
+    heap_free(space_a->page_tables);
+    heap_free(space_a->page_directory);
+    heap_free(space_a);
+
+    heap_free(space_b->page_tables);
+    heap_free(space_b->page_directory);
+    heap_free(space_b);
+
+    c_serial_print(
+        "[InitraOS] PROCESS_ISOLATION_OK\n");
+}
+
+static void process_permission_isolation_test(void)
+{
+    const unsigned int user_virtual =
+        0x00400000;
+
+    const unsigned int kernel_virtual =
+        0x00401000;
+
+    const unsigned int user_frame_a =
+        0x00200000;
+
+    const unsigned int user_frame_b =
+        0x00201000;
+
+    const unsigned int kernel_frame_a =
+        0x00202000;
+
+    const unsigned int kernel_frame_b =
+        0x00203000;
+
+    process_address_space_t *space_a =
+        address_space_create();
+
+    process_address_space_t *space_b =
+        address_space_create();
+
+    if (space_a == 0 ||
+        space_b == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (!page_map_in_address_space(
+            space_a,
+            user_virtual,
+            user_frame_a,
+            PAGE_PRESENT |
+            PAGE_WRITABLE |
+            PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (!page_map_in_address_space(
+            space_b,
+            user_virtual,
+            user_frame_b,
+            PAGE_PRESENT |
+            PAGE_WRITABLE |
+            PAGE_USER))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (!page_map_in_address_space(
+            space_a,
+            kernel_virtual,
+            kernel_frame_a,
+            PAGE_PRESENT |
+            PAGE_WRITABLE))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (!page_map_in_address_space(
+            space_b,
+            kernel_virtual,
+            kernel_frame_b,
+            PAGE_PRESENT |
+            PAGE_WRITABLE))
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    unsigned int user_index =
+        (user_virtual >> 12) & 0x3FF;
+
+    unsigned int kernel_index =
+        (kernel_virtual >> 12) & 0x3FF;
+
+    unsigned int user_entry_a =
+    space_a->page_tables[1][user_index];
+
+    unsigned int user_entry_b =
+    space_b->page_tables[1][user_index];
+
+    unsigned int kernel_entry_a =
+    space_a->page_tables[1][kernel_index];
+
+    unsigned int kernel_entry_b =
+    space_b->page_tables[1][kernel_index];
+
+    if ((user_entry_a & PAGE_USER) == 0 ||
+        (user_entry_b & PAGE_USER) == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if ((kernel_entry_a & PAGE_USER) != 0 ||
+        (kernel_entry_b & PAGE_USER) != 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if ((user_entry_a & 0xFFFFF000) != user_frame_a ||
+        (user_entry_b & 0xFFFFF000) != user_frame_b)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if ((kernel_entry_a & 0xFFFFF000) != kernel_frame_a ||
+        (kernel_entry_b & 0xFFFFF000) != kernel_frame_b)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_PERMISSION_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_PERMISSION_ISOLATION_OK\n");
+
+    heap_free(space_a->page_tables);
+    heap_free(space_a->page_directory);
+    heap_free(space_a);
+
+    heap_free(space_b->page_tables);
+    heap_free(space_b->page_directory);
+    heap_free(space_b);
+}
+
 static void process_create_test(void)
 {
     c_serial_print(
@@ -1515,6 +1812,115 @@ static void process_create_test(void)
 
     c_serial_print(
         "[InitraOS] PROCESS_CREATE_OK\n");
+}
+
+static void process_instance_isolation_test(void)
+{
+    c_serial_print(
+        "[InitraOS] PROCESS_INSTANCE_ISOLATION_START\n");
+
+    process_t *process_a =
+        process_create();
+
+    process_t *process_b =
+        process_create();
+
+    if (process_a == 0 ||
+        process_b == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (process_a->address_space == 0 ||
+        process_b->address_space == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (process_a->address_space ==
+        process_b->address_space)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (process_a->address_space->page_directory ==
+        process_b->address_space->page_directory)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (process_a->address_space->page_tables ==
+        process_b->address_space->page_tables)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_INSTANCE_ISOLATION_PROCESS_OK\n");
+
+    if (process_a->task == 0 ||
+        process_b->task == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    if (process_a->task ==
+        process_b->task)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_INSTANCE_ISOLATION_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_INSTANCE_ISOLATION_TASK_OK\n");
+
+    heap_free(
+        process_a->address_space->page_tables
+    );
+
+    heap_free(
+        process_a->address_space->page_directory
+    );
+
+    heap_free(
+        process_a->address_space
+    );
+
+    heap_free(
+        process_a
+    );
+
+    heap_free(
+        process_b->address_space->page_tables
+    );
+
+    heap_free(
+        process_b->address_space->page_directory
+    );
+
+    heap_free(
+        process_b->address_space
+    );
+
+    heap_free(
+        process_b
+    );
+
+    c_serial_print(
+        "[InitraOS] PROCESS_INSTANCE_ISOLATION_OK\n");
 }
 
 static void page_invalidate(unsigned int virtual_address)
@@ -2901,7 +3307,10 @@ void kernel_main(void)
     paging_enable();
     heap_paging_enabled = 1;
     address_space_create_test();
+    process_isolation_test();
+    process_permission_isolation_test();
     process_create_test();
+    process_instance_isolation_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
