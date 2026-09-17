@@ -1,3 +1,5 @@
+#include "syscall.h"
+
 #define KEYBOARD_BUFFER_SIZE 128
 
 #define TASK_READY     0
@@ -44,6 +46,7 @@ static void process_create_test(void);
 static void process_isolation_test(void);
 static void process_permission_isolation_test(void);
 static void process_instance_isolation_test(void);
+static void syscall_dispatcher_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -60,6 +63,15 @@ static int heap_unmap_page(unsigned int virtual_address);
 
 static unsigned int page_get_physical(
     unsigned int virtual_address
+);
+
+    unsigned int syscall_dispatcher(
+    unsigned int syscall_number,
+    unsigned int arg1,
+    unsigned int arg2,
+    unsigned int arg3,
+    unsigned int arg4,
+    unsigned int arg5
 );
 
 /* ---------- Heap ---------- */
@@ -3311,6 +3323,7 @@ void kernel_main(void)
     process_permission_isolation_test();
     process_create_test();
     process_instance_isolation_test();
+    syscall_dispatcher_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
@@ -3485,4 +3498,130 @@ void keyboard_handle(
 
         keyboard_column++;
     }
+}
+unsigned int syscall_dispatcher(
+    unsigned int syscall_number,
+    unsigned int arg1,
+    unsigned int arg2,
+    unsigned int arg3,
+    unsigned int arg4,
+    unsigned int arg5
+)
+{
+    (void)arg1;
+    (void)arg2;
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+
+    switch (syscall_number)
+    {
+        case SYSCALL_EXIT:
+        case SYSCALL_WRITE:
+        case SYSCALL_GETPID:
+        case SYSCALL_YIELD:
+        case SYSCALL_ALLOC:
+        case SYSCALL_FREE:
+            /*
+             * The system call is recognized.
+             *
+             * Actual operations will be implemented
+             * in the following system-call milestones.
+             */
+            return 0;
+
+        default:
+            /*
+             * Unknown system call.
+             */
+            return (unsigned int)-1;
+    }
+}
+
+static void syscall_dispatcher_test(void)
+{
+    unsigned int result;
+
+    result = syscall_dispatcher(
+        SYSCALL_EXIT,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    result = syscall_dispatcher(
+        SYSCALL_WRITE,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    result = syscall_dispatcher(
+        SYSCALL_GETPID,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    result = syscall_dispatcher(
+        SYSCALL_YIELD,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    result = syscall_dispatcher(
+        SYSCALL_ALLOC,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    result = syscall_dispatcher(
+        SYSCALL_FREE,
+        0, 0, 0, 0, 0);
+
+    if (result != 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    /*
+     * Unknown syscall numbers must return an error.
+     */
+    result = syscall_dispatcher(
+        0xFF,
+        0, 0, 0, 0, 0);
+
+    if (result != (unsigned int)-1)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_DISPATCH_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SYSCALL_DISPATCH_OK\n");
 }

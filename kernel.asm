@@ -39,6 +39,7 @@ global syscall_entry
 extern scheduler_tick
 extern kernel_main
 extern keyboard_handle
+extern syscall_dispatcher
 
 kernel_start:
 
@@ -756,8 +757,31 @@ syscall_entry:
 
     pushad
 
-    ; System call dispatcher will be called here
-    ; in the next system-call milestone.
+    ; pushad layout:
+    ;
+    ; [esp + 28] = saved EAX = syscall number
+    ; [esp + 24] = saved ECX = arg2
+    ; [esp + 20] = saved EDX = arg3
+    ; [esp + 16] = saved EBX = arg1
+    ; [esp + 12] = saved original ESP
+    ; [esp + 8]  = saved EBP
+    ; [esp + 4]  = saved ESI = arg4
+    ; [esp + 0]  = saved EDI = arg5
+
+    push dword [esp + 0]
+    push dword [esp + 4]
+    push dword [esp + 20]
+    push dword [esp + 24]
+    push dword [esp + 16]
+    push dword [esp + 28]
+
+    call syscall_dispatcher
+
+    add esp, 24
+
+    ; Store the dispatcher result as the
+    ; saved EAX value.
+    mov [esp + 28], eax
 
     popad
 
