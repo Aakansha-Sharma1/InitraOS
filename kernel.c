@@ -39,6 +39,7 @@ static void heap_dynamic_test(void);
 static void page_protection_test(void);
 static void page_user_protection_test(void);
 static void user_stack_test(void);
+static void user_region_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -122,6 +123,36 @@ static unsigned int align_up_4k(unsigned int address)
 
 #define USER_CODE_BASE       0x00100000
 #define USER_STACK_BASE      0x007FF000
+
+#define USER_CODE_SIZE       0x00001000
+#define USER_STACK_SIZE      0x00001000
+
+typedef struct memory_region
+{
+    unsigned int base;
+    unsigned int size;
+    unsigned int flags;
+} memory_region_t;
+
+#define MEMORY_REGION_USER       0x01
+#define MEMORY_REGION_WRITABLE   0x02
+#define MEMORY_REGION_EXECUTABLE 0x04
+
+static memory_region_t user_code_region =
+{
+    USER_CODE_BASE,
+    USER_CODE_SIZE,
+    MEMORY_REGION_USER |
+    MEMORY_REGION_EXECUTABLE
+};
+
+static memory_region_t user_stack_region =
+{
+    USER_STACK_BASE,
+    USER_STACK_SIZE,
+    MEMORY_REGION_USER |
+    MEMORY_REGION_WRITABLE
+};
 
 static unsigned char frame_bitmap[FRAME_BITMAP_BYTES];
 
@@ -1888,7 +1919,7 @@ static int user_space_prepare(void)
         source_end - source_start;
 
     if (source_size == 0 ||
-        source_size > 0x1000)
+        source_size > user_code_region.size)
     {
         return 0;
     }
@@ -1897,7 +1928,7 @@ static int user_space_prepare(void)
         (unsigned char *)source_start;
 
     unsigned char *destination =
-        (unsigned char *)USER_CODE_BASE;
+        (unsigned char *)user_code_region.base;
 
     for (unsigned int i = 0;
          i < source_size;
@@ -1907,12 +1938,15 @@ static int user_space_prepare(void)
             source[i];
     }
 
-    /* Clear the entire user stack page before entering Ring 3. */
+    /*
+     * Clear the complete user stack region.
+     */
     volatile unsigned char *user_stack =
-        (volatile unsigned char *)USER_STACK_BASE;
+        (volatile unsigned char *)
+        user_stack_region.base;
 
     for (unsigned int i = 0;
-         i < 0x1000;
+         i < user_stack_region.size;
          i++)
     {
         user_stack[i] = 0;
@@ -1920,7 +1954,6 @@ static int user_space_prepare(void)
 
     return 1;
 }
-
 
 /* ---------- Kernel Task Creation ---------- */
 
@@ -2270,6 +2303,70 @@ static void user_stack_test(void)
 
     c_serial_print(
         "[InitraOS] USER_STACK_OK\n");
+}
+
+static void user_region_test(void)
+{
+    c_serial_print(
+        "[InitraOS] USER_REGION_START\n");
+
+    if (user_code_region.base != USER_CODE_BASE ||
+        user_code_region.size != USER_CODE_SIZE)
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_CODE\n");
+        return;
+    }
+
+    if ((user_code_region.flags &
+         (MEMORY_REGION_USER |
+          MEMORY_REGION_EXECUTABLE)) !=
+        (MEMORY_REGION_USER |
+         MEMORY_REGION_EXECUTABLE))
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_CODE_FLAGS\n");
+        return;
+    }
+
+    if (user_stack_region.base != USER_STACK_BASE ||
+        user_stack_region.size != USER_STACK_SIZE)
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_STACK\n");
+        return;
+    }
+
+    if ((user_stack_region.flags &
+         (MEMORY_REGION_USER |
+          MEMORY_REGION_WRITABLE)) !=
+        (MEMORY_REGION_USER |
+         MEMORY_REGION_WRITABLE))
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_STACK_FLAGS\n");
+        return;
+    }
+
+    if ((user_code_region.base & (FRAME_SIZE - 1)) != 0 ||
+        (user_stack_region.base & (FRAME_SIZE - 1)) != 0)
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_ALIGN\n");
+        return;
+    }
+
+    if (user_code_region.base +
+            user_code_region.size >
+        user_stack_region.base)
+    {
+        c_serial_print(
+            "[InitraOS] USER_REGION_FAIL_OVERLAP\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] USER_REGION_OK\n");
 }
 
 static void task_test_function(void)
@@ -2681,6 +2778,7 @@ void kernel_main(void)
     paging_enable();
     heap_paging_enabled = 1;
     address_space_create_test();
+    user_region_test();
     user_stack_test();
     frame_paging_test();
     dynamic_page_test();
