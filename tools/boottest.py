@@ -54,6 +54,8 @@ EXPECTED = [
     "[InitraOS] FRAME_VALIDATION_OK",
     "[InitraOS] FRAME_PAGING_OK",
     "[InitraOS] DYNAMIC_PAGE_OK",
+    "[InitraOS] PAGE_PROTECTION_OK",
+    "[InitraOS] PAGE_USER_PROTECTION_OK",
     "[InitraOS] HEAP_PAGING_OK",
     "[InitraOS] HEAP_DYNAMIC_OK",
     "[InitraOS] BEFORE_PG",
