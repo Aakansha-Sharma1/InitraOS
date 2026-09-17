@@ -31,6 +31,10 @@ static void page_directory_init(void);
 static void page_tables_init(void);
 static void frame_paging_test(void);
 static void dynamic_page_test(void);
+static void heap_paging_test(void);
+static void heap_free(void *address);
+static void *heap_alloc_paged(unsigned int size);
+static void heap_dynamic_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -42,6 +46,12 @@ static int page_unmap(
     unsigned int virtual_address
 );
 
+static int heap_map_page(unsigned int virtual_address);
+static int heap_unmap_page(unsigned int virtual_address);
+
+static unsigned int page_get_physical(
+    unsigned int virtual_address
+);
 
 /* ---------- Heap ---------- */
 
@@ -52,10 +62,41 @@ typedef struct heap_block
     struct heap_block *next;
 } heap_block_t;
 
+static int heap_blocks_adjacent(
+    heap_block_t *first,
+    heap_block_t *second
+);
+
+static void *heap_realloc(
+    void *address,
+    unsigned int size
+);
+
 static unsigned int heap_pointer = 0;
 static unsigned int heap_limit = 0x80000;
+static unsigned int heap_paging_enabled = 0;
 
 static heap_block_t *heap_first_block = 0;
+
+#define HEAP_PAGED_BASE   0x00030000
+#define HEAP_PAGED_LIMIT  0x00080000
+#define HEAP_PAGE_SIZE    0x1000
+#define HEAP_PAGED_MAX_BLOCKS \
+    ((HEAP_PAGED_LIMIT - HEAP_PAGED_BASE) / HEAP_PAGE_SIZE)
+
+typedef struct paged_heap_block
+{
+    unsigned int address;
+    unsigned int size;
+    unsigned int free;
+} paged_heap_block_t;
+
+static paged_heap_block_t
+    paged_heap_blocks[HEAP_PAGED_MAX_BLOCKS];
+
+static paged_heap_block_t *paged_heap_find(
+    unsigned int address
+);
 
 static unsigned int align_up_4k(unsigned int address)
 {
@@ -293,8 +334,99 @@ static void frame_validation_test(void)
 
 /* ---------- Heap Allocation ---------- */
 
+static void *heap_alloc_paged(unsigned int size)
+{
+    if (size == 0)
+    {
+        return 0;
+    }
+
+    size = (size + 3) & ~3;
+
+    paged_heap_block_t *slot = 0;
+
+    for (unsigned int index = 0;
+         index < HEAP_PAGED_MAX_BLOCKS;
+         index++)
+    {
+        if (paged_heap_blocks[index].free == 1 ||
+            paged_heap_blocks[index].address == 0)
+        {
+            slot = &paged_heap_blocks[index];
+            break;
+        }
+    }
+
+    if (slot == 0)
+    {
+        return 0;
+    }
+
+    unsigned int block_size =
+        sizeof(heap_block_t) + size;
+
+    unsigned int start =
+        align_up_4k(heap_pointer);
+
+    unsigned int end =
+        start + block_size;
+
+    if (start < HEAP_PAGED_BASE)
+    {
+        start = HEAP_PAGED_BASE;
+        end = start + block_size;
+    }
+
+    if (end < start ||
+        end > HEAP_PAGED_LIMIT)
+    {
+        return 0;
+    }
+
+    unsigned int mapped_page_count = 0;
+
+    for (unsigned int page =
+             start & ~(HEAP_PAGE_SIZE - 1);
+         page < end;
+         page += HEAP_PAGE_SIZE)
+    {
+        if (!heap_map_page(page))
+        {
+            for (unsigned int cleanup_page =
+                     start & ~(HEAP_PAGE_SIZE - 1);
+                 cleanup_page <
+                     start +
+                     mapped_page_count *
+                         HEAP_PAGE_SIZE;
+                 cleanup_page += HEAP_PAGE_SIZE)
+            {
+                heap_unmap_page(cleanup_page);
+            }
+
+            return 0;
+        }
+
+        mapped_page_count++;
+    }
+
+    unsigned int address =
+        start + sizeof(heap_block_t);
+
+    slot->address = address;
+    slot->size = size;
+    slot->free = 0;
+
+    heap_pointer = end;
+
+    return (void *)address;
+}
+
 static void *heap_alloc(unsigned int size)
 {
+    if (heap_paging_enabled)
+{
+        return heap_alloc_paged(size);
+    }
     if (size == 0)
     {
         return 0;
@@ -382,6 +514,147 @@ static void *heap_alloc(unsigned int size)
     return (void *)address;
 }
 
+static paged_heap_block_t *paged_heap_find(
+    unsigned int address
+)
+{
+    for (unsigned int index = 0;
+         index < HEAP_PAGED_MAX_BLOCKS;
+         index++)
+    {
+        if (paged_heap_blocks[index].address == address)
+        {
+            return &paged_heap_blocks[index];
+        }
+    }
+
+    return 0;
+}
+
+static void heap_dynamic_test(void)
+{
+    const unsigned int magic1 = 0x95D1A001;
+    const unsigned int magic2 = 0x95D1A002;
+
+    unsigned int address1 =
+        (unsigned int)heap_alloc(64);
+
+    if (address1 == 0)
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    volatile unsigned int *value1 =
+        (volatile unsigned int *)address1;
+
+    *value1 = magic1;
+
+    if (*value1 != magic1)
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    unsigned int virtual_page1 =
+        address1 & ~(HEAP_PAGE_SIZE - 1);
+
+    unsigned int frame1 =
+        page_get_physical(virtual_page1);
+
+    if (frame1 == 0 ||
+        !frame_is_tracked(frame1))
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    unsigned int address2 =
+        (unsigned int)heap_realloc(
+            (void *)address1,
+            128);
+
+    if (address2 == 0 ||
+        address2 == address1)
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    volatile unsigned int *value2 =
+        (volatile unsigned int *)address2;
+
+    if (*value2 != magic1)
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    unsigned int virtual_page2 =
+        address2 & ~(HEAP_PAGE_SIZE - 1);
+
+    unsigned int frame2 =
+        page_get_physical(virtual_page2);
+
+    if (frame2 == 0 ||
+        !frame_is_tracked(frame2))
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    /*
+     * The old allocation must have been released.
+     */
+    if (page_get_physical(virtual_page1) != 0 ||
+        frame_is_tracked(frame1))
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    *value2 = magic2;
+
+    if (*value2 != magic2)
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    heap_free((void *)address2);
+
+    if (page_get_physical(virtual_page2) != 0 ||
+        frame_is_tracked(frame2))
+    {
+        c_serial_print(
+            "[InitraOS] HEAP_DYNAMIC_FAIL\n");
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] HEAP_DYNAMIC_OK\n");
+}
+
+static int heap_blocks_adjacent(
+    heap_block_t *first,
+    heap_block_t *second
+)
+{
+    unsigned int first_end =
+        (unsigned int)(first + 1) +
+        first->size;
+
+    return first_end ==
+           (unsigned int)second;
+}
 
 static void heap_free(void *address)
 {
@@ -390,6 +663,45 @@ static void heap_free(void *address)
         return;
     }
 
+    /*
+     * Check paged heap metadata first.
+     */
+    paged_heap_block_t *paged =
+        paged_heap_find((unsigned int)address);
+
+    if (paged != 0)
+    {
+        if (paged->free == 1)
+        {
+            return;
+        }
+
+        unsigned int paged_block_start =
+            (unsigned int)address -
+            sizeof(heap_block_t);
+
+        unsigned int paged_block_end =
+            paged_block_start +
+            sizeof(heap_block_t) +
+            paged->size;
+
+        paged->free = 1;
+
+        for (unsigned int page =
+                 paged_block_start &
+                 ~(HEAP_PAGE_SIZE - 1);
+             page < paged_block_end;
+             page += HEAP_PAGE_SIZE)
+        {
+            heap_unmap_page(page);
+        }
+
+        return;
+    }
+
+    /*
+     * Legacy non-paged heap.
+     */
     heap_block_t *current =
         heap_first_block;
 
@@ -407,7 +719,10 @@ static void heap_free(void *address)
 
             /* Merge with the next block if it is also free */
             if (current->next != 0 &&
-                current->next->free == 1)
+                current->next->free == 1 &&
+                heap_blocks_adjacent(
+                    current,
+                    current->next))
             {
                 current->size +=
                     sizeof(heap_block_t) +
@@ -429,7 +744,10 @@ static void heap_free(void *address)
 
             /* Merge with the previous block if it is also free */
             if (previous != 0 &&
-                previous->free == 1)
+                previous->free == 1 &&
+                heap_blocks_adjacent(
+                    previous,
+                    current))
             {
                 previous->size +=
                     sizeof(heap_block_t) +
@@ -445,7 +763,6 @@ static void heap_free(void *address)
         current = current->next;
     }
 }
-
 
 static void *heap_realloc(
     void *address,
@@ -466,6 +783,63 @@ static void *heap_realloc(
     /* Keep allocation alignment consistent with heap_alloc */
     size = (size + 3) & ~3;
 
+    /*
+     * Check paged heap metadata first.
+     */
+    paged_heap_block_t *paged =
+        paged_heap_find((unsigned int)address);
+
+    if (paged != 0)
+    {
+        if (paged->free == 1)
+        {
+            return 0;
+        }
+
+        /*
+         * Existing paged block is already large enough.
+         */
+        if (paged->size >= size)
+        {
+            return address;
+        }
+
+        /*
+         * Allocate a new larger paged block.
+         */
+        void *new_address =
+            heap_alloc(size);
+
+        if (new_address == 0)
+        {
+            return 0;
+        }
+
+        /*
+         * Copy the old contents.
+         */
+        unsigned char *source =
+            (unsigned char *)address;
+
+        unsigned char *destination =
+            (unsigned char *)new_address;
+
+        for (unsigned int i = 0;
+             i < paged->size;
+             i++)
+        {
+            destination[i] =
+                source[i];
+        }
+
+        heap_free(address);
+
+        return new_address;
+    }
+
+    /*
+     * Legacy non-paged heap.
+     */
     heap_block_t *current =
         heap_first_block;
 
@@ -513,7 +887,6 @@ static void *heap_realloc(
 
     return 0;
 }
-
 
 /* ---------- Process Address Space ---------- */
 
@@ -864,6 +1237,157 @@ static void dynamic_page_test(void)
     }
 
     c_serial_print("[InitraOS] DYNAMIC_PAGE_OK\n");
+}
+
+static void heap_paging_test(void)
+{
+    const unsigned int heap_page_virtual = 0x00600000;
+    const unsigned int magic = 0x95A11E01;
+
+    unsigned int frame = 0;
+
+    volatile unsigned int *heap_page =
+        (volatile unsigned int *)heap_page_virtual;
+
+    if (!page_map_new_frame(
+            heap_page_virtual,
+            PAGE_PRESENT | PAGE_WRITABLE,
+            &frame))
+    {
+        c_serial_print("[InitraOS] HEAP_PAGING_FAIL\n");
+        return;
+    }
+
+    if (frame == 0 ||
+        !frame_is_tracked(frame))
+    {
+        page_unmap(heap_page_virtual);
+
+        if (frame != 0)
+        {
+            frame_free(frame);
+        }
+
+        c_serial_print("[InitraOS] HEAP_PAGING_FAIL\n");
+        return;
+    }
+
+    *heap_page = magic;
+
+    if (*heap_page != magic)
+    {
+        page_unmap(heap_page_virtual);
+        frame_free(frame);
+
+        c_serial_print("[InitraOS] HEAP_PAGING_FAIL\n");
+        return;
+    }
+
+    if (!page_unmap(heap_page_virtual) ||
+        !frame_free(frame) ||
+        frame_is_tracked(frame))
+    {
+        c_serial_print("[InitraOS] HEAP_PAGING_FAIL\n");
+        return;
+    }
+
+    c_serial_print("[InitraOS] HEAP_PAGING_OK\n");
+}
+
+static int heap_map_page(unsigned int virtual_address)
+{
+    unsigned int frame = 0;
+
+    if ((virtual_address & (HEAP_PAGE_SIZE - 1)) != 0)
+    {
+        return 0;
+    }
+
+    if (virtual_address < HEAP_PAGED_BASE ||
+        virtual_address >= HEAP_PAGED_LIMIT)
+    {
+        return 0;
+    }
+
+    return page_map_new_frame(
+        virtual_address,
+        PAGE_PRESENT | PAGE_WRITABLE,
+        &frame
+    );
+}
+
+static int heap_unmap_page(unsigned int virtual_address)
+{
+    unsigned int directory_index =
+        (virtual_address >> 22) & 0x3FF;
+
+    unsigned int table_index =
+        (virtual_address >> 12) & 0x3FF;
+
+    if ((virtual_address & (HEAP_PAGE_SIZE - 1)) != 0)
+    {
+        return 0;
+    }
+
+    if (virtual_address < HEAP_PAGED_BASE ||
+        virtual_address >= HEAP_PAGED_LIMIT)
+    {
+        return 0;
+    }
+
+    if (directory_index >= PAGE_TABLE_COUNT)
+    {
+        return 0;
+    }
+
+    unsigned int entry =
+        page_tables[directory_index][table_index];
+
+    if ((entry & PAGE_PRESENT) == 0)
+    {
+        return 0;
+    }
+
+    unsigned int frame =
+        entry & 0xFFFFF000;
+
+    if (!page_unmap(virtual_address))
+    {
+        return 0;
+    }
+
+    return frame_free(frame);
+}
+
+static unsigned int page_get_physical(
+    unsigned int virtual_address
+)
+{
+    unsigned int directory_index =
+        (virtual_address >> 22) & 0x3FF;
+
+    unsigned int table_index =
+        (virtual_address >> 12) & 0x3FF;
+
+    if ((virtual_address & (FRAME_SIZE - 1)) != 0)
+    {
+        return 0;
+    }
+
+    if (directory_index >= PAGE_TABLE_COUNT)
+    {
+        return 0;
+    }
+
+    unsigned int entry =
+        page_tables[directory_index][table_index];
+
+    if ((entry & PAGE_PRESENT) == 0)
+    {
+        return 0;
+    }
+
+    return entry & 0xFFFFF000;
 }
 
 static int user_space_prepare(void)
@@ -1592,8 +2116,11 @@ void kernel_main(void)
 
     paging_init();
     paging_enable();
+    heap_paging_enabled = 1;
     frame_paging_test();
     dynamic_page_test();
+    heap_paging_test();
+    heap_dynamic_test();
     enable_long_mode();
     print_at(
         13,
