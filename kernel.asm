@@ -34,6 +34,7 @@ global user_mode_entry
 global user_mode_code_start
 global user_mode_code_end
 global enable_long_mode
+global syscall_entry
 
 extern scheduler_tick
 extern kernel_main
@@ -285,6 +286,21 @@ clear_screen:
 
     mov word [idt_start + 33 * 8 + 6], ax
 
+    ; Vector 0x80 -> system call entry
+    ;
+    ; DPL 3 is required so Ring 3 code can execute
+    ; INT 0x80 directly.
+
+    mov eax, syscall_entry
+
+    mov word [idt_start + 0x80 * 8 + 0], ax
+    mov word [idt_start + 0x80 * 8 + 2], KERNEL_CODE_SELECTOR
+    mov byte [idt_start + 0x80 * 8 + 4], 0
+    mov byte [idt_start + 0x80 * 8 + 5], 0xEE
+
+    shr eax, 16
+
+    mov word [idt_start + 0x80 * 8 + 6], ax
 
     ; -----------------------------------------
     ; Load IDT
@@ -723,6 +739,29 @@ c_serial_print_hex:
 
     ret
 
+; =========================================================
+; System Call Entry
+;
+; User-space enters through:
+;
+;     INT 0x80
+;
+; At this stage the entry point only preserves the
+; interrupted register state and returns to the caller.
+;
+; System call dispatch will be added separately.
+; =========================================================
+
+syscall_entry:
+
+    pushad
+
+    ; System call dispatcher will be called here
+    ; in the next system-call milestone.
+
+    popad
+
+    iret
 
 ; =========================================================
 ; Interrupt 0 Handler
