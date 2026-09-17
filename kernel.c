@@ -38,6 +38,7 @@ static void *heap_alloc_paged_aligned(unsigned int size);
 static void heap_dynamic_test(void);
 static void page_protection_test(void);
 static void page_user_protection_test(void);
+static void user_stack_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -2193,6 +2194,83 @@ static void task_exit(void)
     }
 }
 
+static void user_stack_test(void)
+{
+    c_serial_print(
+        "[InitraOS] USER_STACK_START\n");
+
+    task_t *task =
+        task_create_user();
+
+    if (task == 0)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_CREATE\n");
+        return;
+    }
+
+    if (task->stack_base != USER_STACK_BASE)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_BASE\n");
+        return;
+    }
+
+    if (task->esp != USER_STACK_TOP ||
+        task->ebp != USER_STACK_TOP)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_TOP\n");
+        return;
+    }
+
+    if ((task->esp & 0x0F) != 0)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_ALIGN\n");
+        return;
+    }
+
+    if (task->context == 0 ||
+        task->context->esp != task->esp ||
+        task->context->ebp != task->ebp)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_CONTEXT\n");
+        return;
+    }
+
+    unsigned int stack_page =
+        task->stack_base &
+        ~(HEAP_PAGE_SIZE - 1);
+
+    unsigned int frame =
+        page_get_physical(stack_page);
+
+    if (frame == 0)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_MAPPING\n");
+        return;
+    }
+
+    if ((kernel_address_space.page_tables[1]
+            [(USER_STACK_BASE >> 12) & 0x3FF]
+         & PAGE_USER) == 0)
+    {
+        c_serial_print(
+            "[InitraOS] USER_STACK_FAIL_USER\n");
+        return;
+    }
+
+    task_set_state(
+        task,
+        TASK_FINISHED
+    );
+
+    c_serial_print(
+        "[InitraOS] USER_STACK_OK\n");
+}
 
 static void task_test_function(void)
 {
@@ -2603,6 +2681,7 @@ void kernel_main(void)
     paging_enable();
     heap_paging_enabled = 1;
     address_space_create_test();
+    user_stack_test();
     frame_paging_test();
     dynamic_page_test();
     page_protection_test();

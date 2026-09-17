@@ -53,6 +53,7 @@ EXPECTED = [
     "[InitraOS] FRAME_PROTECT_OK",
     "[InitraOS] FRAME_VALIDATION_OK",
     "[InitraOS] ADDRESS_SPACE_CREATE_OK",
+    "[InitraOS] USER_STACK_OK",
     "[InitraOS] FRAME_PAGING_OK",
     "[InitraOS] DYNAMIC_PAGE_OK",
     "[InitraOS] PAGE_PROTECTION_OK",
