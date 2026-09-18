@@ -34,6 +34,7 @@ static void page_tables_init(void);
 static void frame_paging_test(void);
 static void dynamic_page_test(void);
 static void heap_paging_test(void);
+static void *heap_alloc(unsigned int size);
 static void heap_free(void *address);
 static void *heap_alloc_paged(unsigned int size);
 static void *heap_alloc_paged_aligned(unsigned int size);
@@ -48,6 +49,7 @@ static void process_permission_isolation_test(void);
 static void process_instance_isolation_test(void);
 static void process_task_link_test(void);
 static void syscall_dispatcher_test(void);
+static void syscall_memory_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -3637,6 +3639,7 @@ void kernel_main(void)
     process_instance_isolation_test();
     process_task_link_test();
     syscall_dispatcher_test();
+    syscall_memory_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
@@ -3827,20 +3830,35 @@ unsigned int syscall_dispatcher(
     (void)arg4;
     (void)arg5;
 
-    switch (syscall_number)
+        switch (syscall_number)
     {
         case SYSCALL_EXIT:
         case SYSCALL_WRITE:
         case SYSCALL_GETPID:
         case SYSCALL_YIELD:
+            /*
+             * These system calls are recognized but their
+             * operations will be implemented separately.
+             */
+            return 0;
+
         case SYSCALL_ALLOC:
+            /*
+             * EBX / arg1 = allocation size.
+             *
+             * Return the allocated virtual address in EAX.
+             */
+            return (unsigned int)
+                heap_alloc(arg1);
+
         case SYSCALL_FREE:
             /*
-             * The system call is recognized.
-             *
-             * Actual operations will be implemented
-             * in the following system-call milestones.
+             * EBX / arg1 = allocated address.
              */
+            heap_free(
+                (void *)arg1
+            );
+
             return 0;
 
         default:
@@ -3937,4 +3955,52 @@ static void syscall_dispatcher_test(void)
 
     c_serial_print(
         "[InitraOS] SYSCALL_DISPATCH_OK\n");
+}
+
+static void syscall_memory_test(void)
+{
+    const unsigned int magic =
+        0x5CA110C0;
+
+    unsigned int address =
+        syscall_dispatcher(
+            SYSCALL_ALLOC,
+            64,
+            0, 0, 0, 0
+        );
+
+    if (address == 0)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_MEMORY_FAIL_ALLOC\n");
+        return;
+    }
+
+    volatile unsigned int *value =
+        (volatile unsigned int *)address;
+
+    *value = magic;
+
+    if (*value != magic)
+    {
+        c_serial_print(
+            "[InitraOS] SYSCALL_MEMORY_FAIL_WRITE\n");
+
+        syscall_dispatcher(
+            SYSCALL_FREE,
+            address,
+            0, 0, 0, 0
+        );
+
+        return;
+    }
+
+    syscall_dispatcher(
+        SYSCALL_FREE,
+        address,
+        0, 0, 0, 0
+    );
+
+    c_serial_print(
+        "[InitraOS] SYSCALL_MEMORY_OK\n");
 }
