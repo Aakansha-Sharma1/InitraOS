@@ -46,6 +46,7 @@ static void process_create_test(void);
 static void process_isolation_test(void);
 static void process_permission_isolation_test(void);
 static void process_instance_isolation_test(void);
+static void process_task_link_test(void);
 static void syscall_dispatcher_test(void);
 
 static int page_map(
@@ -393,7 +394,90 @@ static void *heap_alloc_paged(unsigned int size)
     }
 
     size = (size + 3) & ~3;
+    /*
+     * Reuse a previously freed paged allocation first.
+     */
+    for (unsigned int index = 0;
+         index < HEAP_PAGED_MAX_BLOCKS;
+         index++)
+    {
+        paged_heap_block_t *slot =
+            &paged_heap_blocks[index];
 
+        if (slot->free != 1 ||
+            slot->address == 0)
+        {
+            continue;
+        }
+
+        unsigned int address =
+            slot->address;
+
+        unsigned int block_start =
+            address -
+            sizeof(heap_block_t);
+
+        unsigned int end =
+            address +
+            size;
+
+        if (block_start < HEAP_PAGED_BASE ||
+            end < address ||
+            end > HEAP_PAGED_LIMIT)
+        {
+            continue;
+        }
+
+        /*
+         * The old allocation was freed and its pages
+         * were unmapped. Map every page required by
+         * the new allocation.
+         */
+        unsigned int mapped_page_count = 0;
+
+        for (unsigned int page =
+                 block_start &
+                 ~(HEAP_PAGE_SIZE - 1);
+             page < end;
+             page += HEAP_PAGE_SIZE)
+        {
+            if (!heap_map_page(page))
+            {
+                /*
+                 * Roll back pages mapped during this
+                 * reuse attempt.
+                 */
+                for (unsigned int cleanup_page =
+                         block_start &
+                         ~(HEAP_PAGE_SIZE - 1);
+                     cleanup_page <
+                     (block_start &
+                      ~(HEAP_PAGE_SIZE - 1)) +
+                     mapped_page_count *
+                         HEAP_PAGE_SIZE;
+                     cleanup_page += HEAP_PAGE_SIZE)
+                {
+                    heap_unmap_page(
+                        cleanup_page
+                    );
+                }
+
+                return 0;
+            }
+
+            mapped_page_count++;
+        }
+
+        slot->size = size;
+        slot->free = 0;
+
+        return (void *)address;
+    }
+
+    /*
+     * No reusable allocation was found.
+     * Allocate at the end of the current heap.
+     */
     paged_heap_block_t *slot = 0;
 
     for (unsigned int index = 0;
@@ -419,14 +503,13 @@ static void *heap_alloc_paged(unsigned int size)
     unsigned int start =
         align_up_4k(heap_pointer);
 
-    unsigned int end =
-        start + block_size;
-
     if (start < HEAP_PAGED_BASE)
     {
         start = HEAP_PAGED_BASE;
-        end = start + block_size;
     }
+
+    unsigned int end =
+        start + block_size;
 
     if (end < start ||
         end > HEAP_PAGED_LIMIT)
@@ -446,9 +529,9 @@ static void *heap_alloc_paged(unsigned int size)
             for (unsigned int cleanup_page =
                      start & ~(HEAP_PAGE_SIZE - 1);
                  cleanup_page <
-                     start +
-                     mapped_page_count *
-                         HEAP_PAGE_SIZE;
+                 start +
+                 mapped_page_count *
+                     HEAP_PAGE_SIZE;
                  cleanup_page += HEAP_PAGE_SIZE)
             {
                 heap_unmap_page(cleanup_page);
@@ -1074,7 +1157,11 @@ typedef struct process_address_space
 
 static process_address_space_t *address_space_create(void);
 
-typedef struct process
+struct task;
+
+typedef struct process process_t;
+
+struct process
 {
     unsigned int pid;
     unsigned int state;
@@ -1083,11 +1170,15 @@ typedef struct process
     process_address_space_t *address_space;
 
     struct task *task;
-} process_t;
+};
 
 static process_t *process_create(void);
-static struct task *task_create_user(void);
+static struct task *task_create_user(
+    process_t *process
+);
+
 static unsigned int next_process_id = 1;
+
 static process_t *process_create(void)
 {
     process_t *process =
@@ -1119,7 +1210,7 @@ static process_t *process_create(void)
     }
 
     process->task =
-        task_create_user();
+        task_create_user(process);
 
     if (process->task == 0)
     {
@@ -1141,6 +1232,8 @@ typedef struct task
     unsigned int state;
     unsigned int privilege;
 
+    process_t *process;
+
     unsigned int esp;
     unsigned int ebp;
 
@@ -1151,6 +1244,23 @@ typedef struct task
     struct task *next;
 } task_t;
 
+static void task_destroy(task_t *task);
+static void process_destroy(process_t *process);
+
+static void process_attach_task(
+    process_t *process,
+    struct task *task
+)
+{
+    if (process == 0 ||
+        task == 0)
+    {
+        return;
+    }
+
+    task->process =
+        process;
+}
 
 struct task_context
 {
@@ -1767,6 +1877,8 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_PID\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1778,6 +1890,8 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_STATE\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1788,6 +1902,8 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_ADDRESS_SPACE\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1798,6 +1914,8 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_ADDRESS_SPACE_META\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1808,6 +1926,17 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_TASK\n");
+
+        process_destroy(process);
+        return;
+    }
+
+    if (process->task->process != process)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_TASK_LINK\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1816,6 +1945,8 @@ static void process_create_test(void)
     {
         c_serial_print(
             "[InitraOS] PROCESS_CREATE_FAIL_TASK_STATE\n");
+
+        process_destroy(process);
         return;
     }
 
@@ -1824,6 +1955,8 @@ static void process_create_test(void)
 
     c_serial_print(
         "[InitraOS] PROCESS_CREATE_OK\n");
+
+    process_destroy(process);
 }
 
 static void process_instance_isolation_test(void)
@@ -1933,6 +2066,54 @@ static void process_instance_isolation_test(void)
 
     c_serial_print(
         "[InitraOS] PROCESS_INSTANCE_ISOLATION_OK\n");
+}
+
+static void process_task_link_test(void)
+{
+    c_serial_print(
+        "[InitraOS] PROCESS_TASK_LINK_START\n");
+
+    process_t *process =
+        process_create();
+
+    if (process == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TASK_LINK_FAIL_PROCESS\n");
+        return;
+    }
+
+    if (process->task == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TASK_LINK_FAIL_TASK\n");
+
+        process_destroy(process);
+        return;
+    }
+
+    if (process->task->process != process)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TASK_LINK_FAIL_LINK\n");
+
+        process_destroy(process);
+        return;
+    }
+
+    if (process->pid == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TASK_LINK_FAIL_PID\n");
+
+        process_destroy(process);
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_TASK_LINK_OK\n");
+
+    process_destroy(process);
 }
 
 static void page_invalidate(unsigned int virtual_address)
@@ -2519,6 +2700,8 @@ static task_t *task_create(void)
     task->privilege =
         TASK_KERNEL;
 
+    task->process = 0;
+
     task->esp = 0;
     task->ebp = 0;
 
@@ -2564,10 +2747,11 @@ static task_t *task_create(void)
     return task;
 }
 
-
 /* ---------- User Task Creation ---------- */
 
-static task_t *task_create_user(void)
+static task_t *task_create_user(
+    process_t *process
+)
 {
     task_t *task =
         task_create();
@@ -2577,13 +2761,21 @@ static task_t *task_create_user(void)
         return 0;
     }
 
+    /*
+     * If this is a process-owned task, establish the
+     * process/task relationship immediately.
+     *
+     * Independent user tasks remain process-less.
+     */
+    task->process =
+        process;
+
     task->privilege =
         TASK_USER;
 
     /*
-     * The user task does not use the kernel heap stack for Ring 3.
-     * Release the temporary kernel stack and use the dedicated
-     * 0x007FF000 user stack page instead.
+     * The user task does not use the kernel heap stack.
+     * Release the temporary kernel stack.
      */
     heap_free(
         (void *)task->stack_base
@@ -2601,9 +2793,6 @@ static task_t *task_create_user(void)
     task->ebp =
         task->esp;
 
-    /*
-     * Give the user task its own CPU context.
-     */
     task->context =
         (task_context_t *)
         heap_alloc(
@@ -2633,7 +2822,6 @@ static task_t *task_create_user(void)
     task->context->esp =
         task->esp;
 
-    /* User code is copied into a user-accessible page. */
     task->context->eip =
         USER_CODE_BASE;
 
@@ -2646,6 +2834,130 @@ static task_t *task_create_user(void)
     return task;
 }
 
+static void task_destroy(task_t *task)
+{
+    if (task == 0)
+    {
+        return;
+    }
+
+    /*
+     * Do not destroy the currently running task.
+     */
+    if (task == current_task)
+    {
+        return;
+    }
+
+    /*
+     * Remove the task from the global scheduler list.
+     */
+    if (task_list == task)
+    {
+        task_list = task->next;
+    }
+    else
+    {
+        task_t *previous =
+            task_list;
+
+        while (previous != 0 &&
+               previous->next != task)
+        {
+            previous =
+                previous->next;
+        }
+
+        if (previous == 0)
+        {
+            return;
+        }
+
+        previous->next =
+            task->next;
+    }
+
+    /*
+     * Release the task context.
+     */
+    if (task->context != 0)
+    {
+        heap_free(
+            task->context
+        );
+
+        task->context = 0;
+    }
+
+    /*
+     * Release the temporary kernel stack.
+     *
+     * USER_STACK_BASE is not heap allocated here,
+     * so it must not be passed to heap_free().
+     */
+    if (task->stack_base != 0 &&
+        task->stack_base != USER_STACK_BASE)
+    {
+        heap_free(
+            (void *)task->stack_base
+        );
+    }
+
+    task->stack_base = 0;
+    task->process = 0;
+    task->next = 0;
+
+    heap_free(task);
+}
+
+
+static void process_destroy(process_t *process)
+{
+    if (process == 0)
+    {
+        return;
+    }
+
+    /*
+     * The process owns its task.
+     */
+    if (process->task != 0)
+    {
+        task_destroy(
+            process->task
+        );
+
+        process->task = 0;
+    }
+
+    /*
+     * Release the process address space.
+     */
+    if (process->address_space != 0)
+    {
+        if (process->address_space->page_tables != 0)
+        {
+            heap_free(
+                process->address_space->page_tables
+            );
+        }
+
+        if (process->address_space->page_directory != 0)
+        {
+            heap_free(
+                process->address_space->page_directory
+            );
+        }
+
+        heap_free(
+            process->address_space
+        );
+
+        process->address_space = 0;
+    }
+
+    heap_free(process);
+}
 
 /* ---------- Task State ---------- */
 
@@ -2774,7 +3086,7 @@ static void user_stack_test(void)
         "[InitraOS] USER_STACK_START\n");
 
     task_t *task =
-        task_create_user();
+        task_create_user(0);
 
     if (task == 0)
     {
@@ -3211,7 +3523,7 @@ void kernel_main(void)
      * pages, while the kernel image remains supervisor-only.
      */
     task_t *user_test =
-        task_create_user();
+        task_create_user(0);
 
     if (user_test == 0)
     {
@@ -3323,6 +3635,7 @@ void kernel_main(void)
     process_permission_isolation_test();
     process_create_test();
     process_instance_isolation_test();
+    process_task_link_test();
     syscall_dispatcher_test();
     user_region_test();
     user_stack_test();
