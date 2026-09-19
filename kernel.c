@@ -2812,7 +2812,7 @@ static task_t *task_create_user(
     }
 
     task->context->eax = 0;
-    task->context->ebx = 0;
+    task->context->ebx = task->id;
     task->context->ecx = 0;
     task->context->edx = 0;
     task->context->esi = 0;
@@ -3026,7 +3026,6 @@ static task_t *task_schedule_next(void)
     return 0;
 }
 
-
 void scheduler_tick(void)
 {
     task_t *next_task;
@@ -3045,14 +3044,14 @@ void scheduler_tick(void)
         return;
     }
 
-    current_task->state =
-        TASK_READY;
-
-    next_task->state =
-        TASK_RUNNING;
-
-    current_task =
-        next_task;
+    /*
+     * A scheduling decision alone must not change
+     * current_task. The CPU is still executing the
+     * current task until task_switch() performs the
+     * actual context switch.
+     *
+     * Preemptive task switching will be added separately.
+     */
 }
 
 
@@ -3075,6 +3074,27 @@ static void task_exit(void)
         &test_context,
         &kernel_context
     );
+
+    while (1)
+    {
+        __asm__ volatile ("hlt");
+    }
+}
+
+void syscall_exit(void)
+{
+    if (current_task != 0)
+    {
+        task_set_state(
+            current_task,
+            TASK_FINISHED
+        );
+
+        task_switch(
+            current_task->context,
+            &kernel_context
+        );
+    }
 
     while (1)
     {
@@ -3244,7 +3264,6 @@ static void task_test_function(void)
 
     task_exit();
 }
-
 
 /* ---------- Keyboard ---------- */
 
@@ -3646,17 +3665,15 @@ void kernel_main(void)
     dynamic_page_test();
     page_protection_test();
     page_user_protection_test();
-    heap_paging_test();
+        heap_paging_test();
     heap_dynamic_test();
-    enable_long_mode();
-    print_at(
-        13,
-        0,
-        "PAGING ENABLED: PROCESS SPACE PROTECTED"
-    );
 
     /*
      * Start the user task through the privilege-aware task switch.
+     *
+     * This must happen before enable_long_mode(), because
+     * enable_long_mode() enters the 64-bit kernel and does
+     * not return.
      */
     if (user_test != 0 &&
         user_test->context != 0)
@@ -3679,12 +3696,19 @@ void kernel_main(void)
         );
     }
 
+    enable_long_mode();
+
+    print_at(
+        13,
+        0,
+        "PAGING ENABLED: PROCESS SPACE PROTECTED"
+    );
+
     while (1)
     {
         __asm__ volatile ("hlt");
     }
 }
-
 
 /* ---------- Keyboard Handler ---------- */
 
@@ -3833,14 +3857,28 @@ unsigned int syscall_dispatcher(
         switch (syscall_number)
     {
         case SYSCALL_EXIT:
-        case SYSCALL_WRITE:
-        case SYSCALL_GETPID:
-        case SYSCALL_YIELD:
-            /*
-             * These system calls are recognized but their
-             * operations will be implemented separately.
-             */
-            return 0;
+case SYSCALL_WRITE:
+case SYSCALL_YIELD:
+    /*
+     * These system calls are recognized but their
+     * operations will be implemented separately.
+     */
+    return 0;
+
+case SYSCALL_GETPID:
+    /*
+     * Return the ID of the currently running task.
+     */
+    if (current_task == 0)
+    {
+        return (unsigned int)-1;
+    }
+
+    c_serial_print(
+        "[InitraOS] SYSCALL_GETPID_OK\n"
+    );
+
+    return current_task->id;
 
         case SYSCALL_ALLOC:
             /*
@@ -3899,7 +3937,12 @@ static void syscall_dispatcher_test(void)
         SYSCALL_GETPID,
         0, 0, 0, 0, 0);
 
-    if (result != 0)
+    /*
+     * No task is running during the direct dispatcher tests.
+     * GETPID therefore reports an invalid result.
+     */
+    if (current_task != 0 ||
+        result != (unsigned int)-1)
     {
         c_serial_print(
             "[InitraOS] SYSCALL_DISPATCH_FAIL\n");

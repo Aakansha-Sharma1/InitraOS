@@ -40,6 +40,7 @@ extern scheduler_tick
 extern kernel_main
 extern keyboard_handle
 extern syscall_dispatcher
+extern syscall_exit
 
 kernel_start:
 
@@ -481,7 +482,6 @@ user_mode_entry:
     call .get_ip
 
 .get_ip:
-
     pop esi
 
     add esi, user_mode_user_message - .get_ip
@@ -492,20 +492,45 @@ user_mode_entry:
     lodsb
 
     test al, al
-    jz .test_kernel_access
+
+    jz .test_syscall
 
     mov ah, 0x07
+
     stosw
 
     jmp .user_print
 
 
-.test_kernel_access:
+.test_syscall:
 
-    ; 0x8800 is inside the kernel image
-    ; and is supervisor-only.
+    ; Test GETPID.
+    mov eax, 2
 
-    mov eax, [0x00008800]
+    int 0x80
+
+    ; The first kernel task has PID 1.
+    ; user_test is the next task, so its PID is 2.
+    cmp eax, ebx
+    jne .syscall_test_fail
+
+
+.test_exit:
+
+    ; Test SYSCALL_EXIT.
+    ;
+    ; syscall_entry detects syscall number 0
+    ; and switches back to kernel_context.
+    mov eax, 0
+
+    int 0x80
+
+.syscall_test_fail:
+
+    ; GETPID returned an unexpected value.
+    ; Do not exit the task, so the test cannot
+    ; falsely report success.
+    jmp .syscall_test_fail
 
 
 .user_halt:
@@ -514,10 +539,9 @@ user_mode_entry:
 
 
 user_mode_user_message db \
-    'USER MODE WORKED! TESTING PROTECTION...', 0
+    'USER MODE WORKED! TESTING SYSCALL...', 0
 
 user_mode_code_end:
-
 
 ; =========================================================
 ; task_switch
@@ -768,24 +792,64 @@ syscall_entry:
     ; [esp + 4]  = saved ESI = arg4
     ; [esp + 0]  = saved EDI = arg5
 
-    push dword [esp + 0]
-    push dword [esp + 4]
-    push dword [esp + 20]
-    push dword [esp + 24]
-    push dword [esp + 16]
-    push dword [esp + 28]
+    ; Copy the complete syscall register state
+    ; before pushing anything onto the stack.
+
+    mov eax, [esp + 28]    ; syscall number
+    mov ebx, [esp + 16]    ; arg1
+    mov ecx, [esp + 24]    ; arg2
+    mov edx, [esp + 20]    ; arg3
+    mov esi, [esp + 4]     ; arg4
+    mov edi, [esp + 0]     ; arg5
+
+    ; Preserve syscall number across the C call.
+    push eax
+
+    ; syscall_dispatcher(
+    ;     syscall_number,
+    ;     arg1,
+    ;     arg2,
+    ;     arg3,
+    ;     arg4,
+    ;     arg5
+    ; );
+    ;
+    ; cdecl arguments are pushed right-to-left.
+
+    push edi               ; arg5
+    push esi               ; arg4
+    push edx               ; arg3
+    push ecx               ; arg2
+    push ebx               ; arg1
+    push eax               ; syscall number
 
     call syscall_dispatcher
 
+    ; Remove six dispatcher arguments.
     add esp, 24
 
-    ; Store the dispatcher result as the
-    ; saved EAX value.
+    ; Recover original syscall number.
+    pop edx
+
+    ; SYSCALL_EXIT does not return to user mode.
+    cmp edx, 0
+    je syscall_exit_entry
+
+    ; Store dispatcher result as saved EAX.
     mov [esp + 28], eax
 
     popad
 
     iret
+
+
+syscall_exit_entry:
+
+    call syscall_exit
+
+    ; syscall_exit() switches away from the
+    ; finished user task and does not return.
+    jmp $
 
 ; =========================================================
 ; Interrupt 0 Handler
