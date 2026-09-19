@@ -1402,6 +1402,15 @@ kernel64_entry:
     ; #91: Enable hardware interrupts after 64-bit entry validation.
     sti
 
+    ; Wait for one real timer IRQ before triggering
+    ; the page fault. This makes the timer validation
+    ; deterministic instead of depending on QEMU timing.
+    mov ebx, dword [timer_ticks]
+
+.kernel64_wait_timer:
+    cmp dword [timer_ticks], ebx
+    je .kernel64_wait_timer
+
     ; #90: Trigger a real page fault outside the identity-mapped range.
     mov rdi, 0x01000000
     mov byte [rdi], 0x00
