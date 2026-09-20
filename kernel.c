@@ -1177,7 +1177,8 @@ struct process
 
 static process_t *process_create(void);
 static struct task *task_create_user(
-    process_t *process
+    process_t *process,
+    unsigned int entry_point
 );
 
 static unsigned int next_process_id = 1;
@@ -1213,7 +1214,10 @@ static process_t *process_create(void)
     }
 
     process->task =
-        task_create_user(process);
+        task_create_user(
+            process,
+            USER_CODE_BASE
+        );
 
     if (process->task == 0)
     {
@@ -2730,7 +2734,9 @@ static int user_program_load(
     return 1;
 }
 
-static int user_space_prepare(void)
+static int user_space_prepare(
+    unsigned int *entry_point
+)
 {
     unsigned int image_start =
         (unsigned int)user_mode_code_start;
@@ -2741,9 +2747,8 @@ static int user_space_prepare(void)
     unsigned int image_size =
         image_end - image_start;
 
-    unsigned int entry_point = 0;
-
-    if (image_size == 0)
+    if (entry_point == 0 ||
+        image_size == 0)
     {
         return 0;
     }
@@ -2751,16 +2756,10 @@ static int user_space_prepare(void)
     if (!user_program_load(
             (const unsigned char *)image_start,
             image_size,
-            &entry_point))
+            entry_point))
     {
         return 0;
     }
-
-    /*
-     * The entry point is validated and translated by
-     * the loader. Startup will consume it in #112.
-     */
-    (void)entry_point;
 
     /*
      * Clear the complete user stack region.
@@ -2852,7 +2851,8 @@ static task_t *task_create(void)
 /* ---------- User Task Creation ---------- */
 
 static task_t *task_create_user(
-    process_t *process
+    process_t *process,
+    unsigned int entry_point
 )
 {
     task_t *task =
@@ -2925,7 +2925,7 @@ static task_t *task_create_user(
         task->esp;
 
     task->context->eip =
-        USER_CODE_BASE;
+    entry_point;
 
     task->context->eflags =
         0x202;
@@ -3208,7 +3208,10 @@ static void user_stack_test(void)
         "[InitraOS] USER_STACK_START\n");
 
     task_t *task =
-        task_create_user(0);
+        task_create_user(
+            0,
+            USER_CODE_BASE
+        );
 
     if (task == 0)
     {
@@ -3640,35 +3643,6 @@ void kernel_main(void)
     }
 
     /*
-     * Create a user task. Its code and stack live in user-accessible
-     * pages, while the kernel image remains supervisor-only.
-     */
-    task_t *user_test =
-        task_create_user(0);
-
-    if (user_test == 0)
-    {
-        print_at(
-            11,
-            0,
-            "USER TASK CREATE FAILED"
-        );
-    }
-    else
-    {
-        print_at(
-            11,
-            0,
-            "USER TASK: RING 3 + PROTECTED MEMORY"
-        );
-
-        task_set_state(
-            user_test,
-            TASK_READY
-        );
-    }
-
-    /*
      * Keep the existing kernel task-switch test.
      */
     unsigned int stack_top =
@@ -3725,8 +3699,15 @@ void kernel_main(void)
 
     /*
      * Prepare the user image before paging is enabled.
+     *
+     * The executable loader returns the virtual address of
+     * the program's declared entry point.
      */
-    if (!user_space_prepare())
+    unsigned int user_entry_point = 0;
+
+    if (!user_space_prepare(
+            &user_entry_point
+        ))
     {
         print_at(
             12,
@@ -3740,6 +3721,37 @@ void kernel_main(void)
         {
             __asm__ volatile ("hlt");
         }
+    }
+
+    /*
+     * Create the user task from the loaded executable.
+     */
+    task_t *user_test =
+        task_create_user(
+            0,
+            user_entry_point
+        );
+
+    if (user_test == 0)
+    {
+        print_at(
+            11,
+            0,
+            "USER TASK CREATE FAILED"
+        );
+    }
+    else
+    {
+        print_at(
+            11,
+            0,
+            "USER TASK: RING 3 + PROTECTED MEMORY"
+        );
+
+        task_set_state(
+            user_test,
+            TASK_READY
+        );
     }
 
     print_at(
