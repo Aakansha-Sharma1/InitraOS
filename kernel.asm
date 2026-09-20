@@ -520,9 +520,15 @@ user_mode_entry:
 
 .test_syscall:
 
+    ; Mark that the loaded user program actually
+    ; reached this point in Ring 3.
+    ;
+    ; USER_STACK_BASE is the existing user-writable
+    ; stack page at 0x007FF000.
+    mov dword [0x007FF000], 0x45584543
+
     ; Test GETPID.
     mov eax, 2
-
     int 0x80
 
     ; The first kernel task has PID 1.
@@ -530,11 +536,9 @@ user_mode_entry:
     cmp eax, ebx
     jne .syscall_test_fail
 
-
 .test_exit:
 
     ; Test SYSCALL_EXIT.
-    ;
     ; syscall_entry detects syscall number 0
     ; and switches back to kernel_context.
     mov eax, 0
@@ -547,7 +551,6 @@ user_mode_entry:
     ; Do not exit the task, so the test cannot
     ; falsely report success.
     jmp .syscall_test_fail
-
 
 .user_halt:
 

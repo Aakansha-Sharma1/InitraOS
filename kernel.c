@@ -3820,6 +3820,25 @@ void kernel_main(void)
             c_serial_print(
                 "[InitraOS] USER_PROGRAM_EXIT_OK\n"
             );
+
+            /*
+             * Validate that the actual Ring 3 user program
+             * executed its instructions and successfully
+             * wrote to the user-writable stack page.
+             */
+            if (*(volatile unsigned int *)USER_STACK_BASE ==
+                0x45584543)
+            {
+                c_serial_print(
+                    "[InitraOS] USER_PROGRAM_EXECUTION_OK\n"
+                );
+            }
+            else
+            {
+                c_serial_print(
+                    "[InitraOS] USER_PROGRAM_EXECUTION_FAIL\n"
+                );
+            }
         }
         else
         {
