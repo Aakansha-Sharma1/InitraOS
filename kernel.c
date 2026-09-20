@@ -1,4 +1,5 @@
 #include "syscall.h"
+#include "program.h"
 
 #define KEYBOARD_BUFFER_SIZE 128
 
@@ -2631,36 +2632,135 @@ static unsigned int page_get_physical(
     );
 }
 
-static int user_space_prepare(void)
+static int user_program_load(
+    const unsigned char *image,
+    unsigned int image_size,
+    unsigned int *entry_point
+)
 {
-    unsigned int source_start =
-        (unsigned int)user_mode_code_start;
+    const unsigned int header_size =
+        sizeof(initraos_program_header_t);
 
-    unsigned int source_end =
-        (unsigned int)user_mode_code_end;
-
-    unsigned int source_size =
-        source_end - source_start;
-
-    if (source_size == 0 ||
-        source_size > user_code_region.size)
+    if (image == 0 ||
+        entry_point == 0 ||
+        image_size < header_size)
     {
         return 0;
     }
 
-    unsigned char *source =
-        (unsigned char *)source_start;
+    const initraos_program_header_t *header =
+        (const initraos_program_header_t *)image;
+
+    if (header->magic != INITRAOS_PROGRAM_MAGIC)
+    {
+        return 0;
+    }
+
+    if (header->version != INITRAOS_PROGRAM_VERSION)
+    {
+        return 0;
+    }
+
+    unsigned int payload_size =
+        header->code_size +
+        header->data_size;
+
+    if (header->code_size == 0)
+    {
+        return 0;
+    }
+
+    if (payload_size < header->code_size)
+    {
+        return 0;
+    }
+
+    if (header->bss_size >
+        user_code_region.size - payload_size)
+    {
+        return 0;
+    }
+
+    if (header_size > image_size ||
+        payload_size > image_size - header_size)
+    {
+        return 0;
+    }
+
+    unsigned int image_memory_size =
+        payload_size +
+        header->bss_size;
+
+    if (image_memory_size < payload_size ||
+        image_memory_size > user_code_region.size)
+    {
+        return 0;
+    }
+
+    if (header->entry >= header->code_size)
+    {
+        return 0;
+    }
 
     unsigned char *destination =
         (unsigned char *)user_code_region.base;
 
+    const unsigned char *payload =
+        image + header_size;
+
     for (unsigned int i = 0;
-         i < source_size;
+         i < payload_size;
          i++)
     {
         destination[i] =
-            source[i];
+            payload[i];
     }
+
+    for (unsigned int i = payload_size;
+         i < image_memory_size;
+         i++)
+    {
+        destination[i] = 0;
+    }
+
+    *entry_point =
+        user_code_region.base +
+        header->entry;
+
+    return 1;
+}
+
+static int user_space_prepare(void)
+{
+    unsigned int image_start =
+        (unsigned int)user_mode_code_start;
+
+    unsigned int image_end =
+        (unsigned int)user_mode_code_end;
+
+    unsigned int image_size =
+        image_end - image_start;
+
+    unsigned int entry_point = 0;
+
+    if (image_size == 0)
+    {
+        return 0;
+    }
+
+    if (!user_program_load(
+            (const unsigned char *)image_start,
+            image_size,
+            &entry_point))
+    {
+        return 0;
+    }
+
+    /*
+     * The entry point is validated and translated by
+     * the loader. Startup will consume it in #112.
+     */
+    (void)entry_point;
 
     /*
      * Clear the complete user stack region.

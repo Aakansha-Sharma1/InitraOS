@@ -475,6 +475,22 @@ enter_user_mode:
 
 user_mode_code_start:
 
+    ; -----------------------------------------------------
+    ; InitraOS native user program header.
+    ;
+    ; entry      = 0
+    ; code_size  = user program code size
+    ; data_size  = 0
+    ; bss_size   = 0
+    ; -----------------------------------------------------
+
+    dd 0x49504F53
+    dd 1
+    dd 0
+    dd user_mode_code_end - user_mode_entry
+    dd 0
+    dd 0
+
 user_mode_entry:
 
     mov edi, 0xB8C80
