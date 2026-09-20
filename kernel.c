@@ -3806,6 +3806,27 @@ void kernel_main(void)
             &kernel_context,
             user_test->context
         );
+
+        /*
+         * Returning here means the user task called
+         * SYSCALL_EXIT and switched back to the
+         * saved kernel context.
+         */
+        if (user_test->state ==
+                TASK_FINISHED &&
+            current_task ==
+                user_test)
+        {
+            c_serial_print(
+                "[InitraOS] USER_PROGRAM_EXIT_OK\n"
+            );
+        }
+        else
+        {
+            c_serial_print(
+                "[InitraOS] USER_PROGRAM_EXIT_FAIL\n"
+            );
+        }
     }
 
     enable_long_mode();

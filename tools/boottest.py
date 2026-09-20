@@ -78,6 +78,7 @@ EXPECTED = [
     "[InitraOS] PAGE_USER_PROTECTION_OK",
     "[InitraOS] HEAP_PAGING_OK",
     "[InitraOS] HEAP_DYNAMIC_OK",
+    "[InitraOS] USER_PROGRAM_EXIT_OK",
     "[InitraOS] BEFORE_PG",
     "[InitraOS] LONG_MODE_ENABLED_OK",
     "[InitraOS] KERNEL64_ENTRY_OK",
