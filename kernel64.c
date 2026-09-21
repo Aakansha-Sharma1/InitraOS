@@ -6,10 +6,12 @@
  * and embedded into the existing 64-bit kernel section.
  */
 
-#define COM1 0x3F8
+#include <stdint.h>
+
+#define COM1 ((uint16_t)0x3F8)
 
 static void serial64_c_putc(
-    unsigned char value
+    uint8_t value
 );
 
 /*
@@ -48,11 +50,11 @@ void kernel64_main(void)
     serial64_c_putc('\n');
 }
 
-static inline unsigned char io_inb(
-    unsigned short port
+static inline uint8_t io_inb(
+    uint16_t port
 )
 {
-    unsigned char value;
+    uint8_t value;
 
     __asm__ volatile (
         "inb %1, %0"
@@ -64,8 +66,8 @@ static inline unsigned char io_inb(
 }
 
 static inline void io_outb(
-    unsigned short port,
-    unsigned char value
+    uint16_t port,
+    uint8_t value
 )
 {
     __asm__ volatile (
@@ -76,7 +78,7 @@ static inline void io_outb(
 }
 
 static void serial64_c_putc(
-    unsigned char value
+    uint8_t value
 )
 {
     while ((io_inb(COM1 + 5) & 0x20) == 0)
