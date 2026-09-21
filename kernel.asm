@@ -1420,10 +1420,11 @@ kernel64_entry:
     ;
     ; kernel64_stack_top is 16-byte aligned.
     ; System V x86-64 requires RSP to be 16-byte aligned
-    ; before a CALL instruction.
-    sub rsp, 8
+    ; immediately before CALL.
+    ;
+    ; CALL pushes the return address, so the C function
+    ; enters with RSP 8 bytes below a 16-byte boundary.
     call kernel64_c_main
-    add rsp, 8
 
     ; Continue with the existing 64-bit interrupt tests.
 
