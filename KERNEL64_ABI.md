@@ -150,9 +150,28 @@ Fixed-width integer types should be preferred when the exact size matters:
 Pointer-sized values should use an appropriate pointer-width type rather than
 assuming that an address fits in `uint32_t`.
 
----
+## 9. Page-Table Entry Type
 
-## 9. Assembly-to-C Entry
+The 64-bit kernel defines:
+
+    kernel64_page_entry_t
+
+as a 64-bit unsigned value used to represent an x86-64 page-table entry.
+
+The type is defined as:
+
+    typedef uint64_t kernel64_page_entry_t;
+
+An x86-64 page-table entry occupies 8 bytes.
+
+The current page-table implementation is built by the 32-bit assembly paging
+bootstrap in `paging64.inc`. The C type is currently an interface/type
+definition only and does not replace the existing assembly implementation.
+
+The exact page-entry flags and layout remain defined by the paging
+implementation and are not part of the current 64-bit C ABI.
+
+## 10. Assembly-to-C Entry
 
 The current 64-bit C entry is intentionally minimal.
 
@@ -170,7 +189,7 @@ The C entry must return normally during the current validation stage.
 
 ---
 
-## 10. Interrupt Boundary
+## 11. Interrupt Boundary
 
 Hardware interrupts and CPU exceptions remain assembly-owned.
 
@@ -185,7 +204,7 @@ ABI has been defined.
 
 ---
 
-## 11. Syscall Boundary
+## 12. Syscall Boundary
 
 The existing syscall interface is currently a 32-bit interface.
 
@@ -196,7 +215,7 @@ It will be specified separately before migrating the syscall subsystem to
 
 ---
 
-## 12. Context-Switch Boundary
+## 13. Context-Switch Boundary
 
 The existing task context structures are currently 32-bit.
 
@@ -214,7 +233,7 @@ is defined.
 
 ---
 
-## 13. Current ABI Boundary
+## 14. Current ABI Boundary
 
 At the current migration stage:
 
@@ -236,7 +255,7 @@ The two ABIs must be treated as separate interfaces.
 
 ---
 
-## 14. Migration Rule
+## 15. Migration Rule
 
 New 64-bit C code must follow this ABI.
 
@@ -247,7 +266,7 @@ Each subsystem migrated to 64-bit must explicitly define and validate its
 
 ---
 
-## 15. Current Validation
+## 16. Current Validation
 
 The current ABI boundary has been runtime-tested.
 
