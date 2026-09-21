@@ -33,8 +33,19 @@ $(BUILD)/kernel.c.o: kernel.c | $(BUILD)
 		-fno-asynchronous-unwind-tables -fno-unwind-tables \
 		-c kernel.c -o $@
 
+# Compile the first 64-bit C kernel entry as freestanding x86-64 code.
+$(BUILD)/kernel64.c.o: kernel64.c | $(BUILD)
+	$(CC) -m64 -ffreestanding -fno-pie -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -fno-unwind-tables \
+		-mno-red-zone -O0 \
+		-c kernel64.c -o $@
+
+# Extract the self-contained 64-bit C text for embedding into the existing ELF32 kernel object.
+$(BUILD)/kernel64.c.bin: $(BUILD)/kernel64.c.o
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+
 # Assemble the low-level kernel entry/ISR code as ELF32.
-$(BUILD)/kernel.asm.o: kernel.asm idt.inc serial.inc | $(BUILD)
+$(BUILD)/kernel.asm.o: kernel.asm idt.inc serial.inc $(BUILD)/kernel64.c.bin | $(BUILD)
 	$(NASM) -f elf32 $(NASMFLAGS) kernel.asm -o $@
 
 # Link the C and assembly objects into an ELF kernel.

@@ -1408,13 +1408,27 @@ kernel64_entry:
 
     lodsb
     test al, al
-    jz .kernel64_int0
+    jz .kernel64_c_entry
 
     call serial64_putc
 
     jmp .kernel64_serial_loop
 
+.kernel64_c_entry:
+
+    ; First 64-bit C kernel entry test.
+    ;
+    ; kernel64_stack_top is 16-byte aligned.
+    ; System V x86-64 requires RSP to be 16-byte aligned
+    ; before a CALL instruction.
+    sub rsp, 8
+    call kernel64_c_main
+    add rsp, 8
+
+    ; Continue with the existing 64-bit interrupt tests.
+
 .kernel64_int0:
+
     ; #89: Verify 64-bit interrupt delivery and return.
     int 0
 
@@ -1636,6 +1650,17 @@ serial64_print_hex:
     pop rax
 
     ret
+
+; =========================================================
+; 64-bit C kernel entry
+; =========================================================
+;
+; The machine code was compiled separately with GCC -m64.
+; It is embedded here so the existing mixed ELF32/ELF64
+; kernel link remains unchanged for this milestone.
+;
+kernel64_c_main:
+    incbin "build/kernel64.c.bin"
 
 bits 32
 
