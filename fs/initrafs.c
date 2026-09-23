@@ -246,3 +246,230 @@ int initrafs_root_directory_init(
 
     return 1;
 }
+static unsigned int initrafs_bitmap_bytes(
+    unsigned int block_count
+)
+{
+    return (block_count + 7U) / 8U;
+}
+
+static unsigned int initrafs_bitmap_index(
+    unsigned int block
+)
+{
+    return block >> 3;
+}
+
+static unsigned char initrafs_bitmap_mask(
+    unsigned int block
+)
+{
+    return (unsigned char)
+        (1U << (block & 7U));
+}
+
+static int initrafs_block_is_marked(
+    const initrafs_block_allocator_t *allocator,
+    unsigned int block
+)
+{
+    return (
+        allocator->bitmap[
+            initrafs_bitmap_index(block)
+        ] &
+        initrafs_bitmap_mask(block)
+    ) != 0;
+}
+
+static void initrafs_block_mark_used(
+    initrafs_block_allocator_t *allocator,
+    unsigned int block
+)
+{
+    allocator->bitmap[
+        initrafs_bitmap_index(block)
+    ] |=
+        initrafs_bitmap_mask(block);
+}
+
+static void initrafs_block_mark_free(
+    initrafs_block_allocator_t *allocator,
+    unsigned int block
+)
+{
+    allocator->bitmap[
+        initrafs_bitmap_index(block)
+    ] &=
+        (unsigned char)
+        ~initrafs_bitmap_mask(block);
+}
+
+int initrafs_block_allocator_init(
+    initrafs_block_allocator_t *allocator,
+    initrafs_superblock_t *superblock,
+    unsigned char *bitmap,
+    unsigned int bitmap_bytes
+)
+{
+    unsigned int required_bitmap_bytes;
+
+    if (allocator == 0 ||
+        superblock == 0 ||
+        bitmap == 0)
+    {
+        return 0;
+    }
+
+    if (superblock->total_blocks <=
+        superblock->data_start)
+    {
+        return 0;
+    }
+
+    required_bitmap_bytes =
+        initrafs_bitmap_bytes(
+            superblock->total_blocks
+        );
+
+    if (bitmap_bytes <
+        required_bitmap_bytes)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        bitmap,
+        required_bitmap_bytes
+    );
+
+    allocator->bitmap =
+        bitmap;
+
+    allocator->bitmap_bytes =
+        required_bitmap_bytes;
+
+    allocator->total_blocks =
+        superblock->total_blocks;
+
+    allocator->first_data_block =
+        superblock->data_start;
+
+    /*
+     * The first data block belongs to the
+     * root directory and is therefore already used.
+     */
+    initrafs_block_mark_used(
+        allocator,
+        superblock->data_start
+    );
+
+    allocator->free_blocks =
+        superblock->total_blocks -
+        superblock->data_start -
+        1U;
+
+    allocator->superblock =
+        superblock;
+
+    superblock->free_block_count =
+        allocator->free_blocks;
+
+    return 1;
+}
+
+unsigned int initrafs_block_alloc(
+    initrafs_block_allocator_t *allocator
+)
+{
+    if (allocator == 0 ||
+        allocator->bitmap == 0)
+    {
+        return 0;
+    }
+
+    for (unsigned int block =
+             allocator->first_data_block;
+         block < allocator->total_blocks;
+         block++)
+    {
+        if (initrafs_block_is_marked(
+                allocator,
+                block))
+        {
+            continue;
+        }
+
+        initrafs_block_mark_used(
+            allocator,
+            block
+        );
+
+        allocator->free_blocks--;
+
+        allocator->superblock
+            ->free_block_count =
+            allocator->free_blocks;
+
+        return block;
+    }
+
+    return 0;
+}
+
+int initrafs_block_free(
+    initrafs_block_allocator_t *allocator,
+    unsigned int block
+)
+{
+    if (allocator == 0 ||
+        allocator->bitmap == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Metadata blocks cannot be freed through
+     * the data-block allocator.
+     */
+    if (block <
+            allocator->first_data_block ||
+        block >=
+            allocator->total_blocks)
+    {
+        return 0;
+    }
+
+    /*
+     * The first data block is reserved for
+     * the root directory.
+     */
+    if (block ==
+        allocator->first_data_block)
+    {
+        return 0;
+    }
+
+    /*
+     * A block that is already free cannot
+     * be freed again.
+     */
+    if (!initrafs_block_is_marked(
+            allocator,
+            block))
+    {
+        return 0;
+    }
+
+    initrafs_block_mark_free(
+        allocator,
+        block
+    );
+
+    allocator->free_blocks++;
+
+    allocator->superblock
+        ->free_block_count =
+        allocator->free_blocks;
+
+    return 1;
+}

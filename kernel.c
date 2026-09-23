@@ -54,6 +54,7 @@ static void syscall_dispatcher_test(void);
 static void syscall_memory_test(void);
 static void initrafs_superblock_test(void);
 static void initrafs_root_test(void);
+static void initrafs_block_allocator_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -3747,6 +3748,148 @@ static void initrafs_root_test(void)
     );
 }
 
+static void initrafs_block_allocator_test(void)
+{
+    #define INITRAFS_TEST_TOTAL_BLOCKS 4096U
+    #define INITRAFS_TEST_BITMAP_BYTES         ((INITRAFS_TEST_TOTAL_BLOCKS + 7U) / 8U)
+
+    initrafs_superblock_t superblock;
+
+    initrafs_block_allocator_t allocator;
+
+    unsigned char bitmap[
+        INITRAFS_TEST_BITMAP_BYTES
+    ];
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            INITRAFS_TEST_TOTAL_BLOCKS))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_block_allocator_init(
+            &allocator,
+            &superblock,
+            bitmap,
+            sizeof(bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * data_start is reserved for the root
+     * directory, so it must not be allocated.
+     */
+    if (initrafs_block_alloc(
+            &allocator) !=
+        superblock.data_start + 1U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    unsigned int first_block =
+        superblock.data_start + 1U;
+
+    unsigned int second_block =
+        initrafs_block_alloc(
+            &allocator
+        );
+
+    if (second_block !=
+        first_block + 1U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_block_free(
+            &allocator,
+            first_block))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_block_free(
+            &allocator,
+            first_block))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    unsigned int reused_block =
+        initrafs_block_alloc(
+            &allocator
+        );
+
+    if (reused_block !=
+        first_block)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_block_free(
+            &allocator,
+            INITRAFS_SUPERBLOCK_BLOCK) ||
+        initrafs_block_free(
+            &allocator,
+            superblock.data_start))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_block_free(
+            &allocator,
+            reused_block) ||
+        !initrafs_block_free(
+            &allocator,
+            second_block))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (superblock.free_block_count !=
+        INITRAFS_TEST_TOTAL_BLOCKS -
+        superblock.data_start -
+        1U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_BLOCK_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -3938,6 +4081,7 @@ void kernel_main(void)
     heap_dynamic_test();
     initrafs_superblock_test();
     initrafs_root_test();
+    initrafs_block_allocator_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
