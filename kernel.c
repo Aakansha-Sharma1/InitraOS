@@ -64,6 +64,7 @@ static void initrafs_file_io_test(void);
 static void initrafs_directory_path_test(void);
 static void initrafs_instance_test(void);
 static void initrafs_vfs_test(void);
+static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
 
 
@@ -6034,6 +6035,175 @@ static void initrafs_vfs_directory_test(void)
         "[InitraOS] INITRAFS_VFS_DIRECTORY_OK\n"
     );
 }
+static void initrafs_vfs_rmdir_test(void)
+{
+    initrafs_instance_t instance;
+    filesystem_t filesystem;
+    block_device_t device;
+
+    struct fs_inode docs_inode;
+    initrafs_disk_inode_t docs_disk_inode;
+
+    initrafs_disk_dirent_t docs_entries[
+        INITRAFS_INSTANCE_DIRECTORY_ENTRIES
+    ];
+
+    unsigned int inode_number;
+    unsigned int registered = 0;
+    unsigned int mounted = 0;
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_vfs_init(
+            &filesystem,
+            &instance) ||
+        !filesystem_register(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    registered = 1;
+
+    if (!vfs_mount(
+            &filesystem,
+            &device))
+    {
+        goto fail;
+    }
+
+    mounted = 1;
+
+    /*
+     * The root directory itself cannot be removed.
+     */
+    if (vfs_rmdir("/") != 0)
+    {
+        goto fail;
+    }
+
+    /*
+     * Create one empty child directory through
+     * the existing InitraFS primitives.
+     */
+    if (!initrafs_directory_create(
+            &instance.inode_allocator,
+            &docs_inode,
+            &docs_disk_inode,
+            docs_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES,
+            0755U,
+            INITRAFS_ROOT_INODE))
+    {
+        goto fail;
+    }
+
+    if (!initrafs_directory_add(
+            instance.root_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES,
+            docs_inode.inode_number,
+            INITRAFS_TYPE_DIRECTORY,
+            "docs"))
+    {
+        goto fail;
+    }
+
+    instance.root_inode.link_count++;
+    instance.root_disk_inode.link_count++;
+
+    if (!initrafs_namespace_register(
+            &instance.namespace,
+            &docs_inode,
+            &docs_disk_inode,
+            docs_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES))
+    {
+        goto fail;
+    }
+
+    /*
+     * Remove the empty directory through VFS.
+     */
+    if (!vfs_rmdir("/docs"))
+    {
+        goto fail;
+    }
+
+    if (initrafs_path_lookup(
+            &instance.namespace,
+            "/docs",
+            &inode_number))
+    {
+        goto fail;
+    }
+
+    if (instance.root_inode.link_count !=
+            INITRAFS_ROOT_LINK_COUNT ||
+        instance.root_disk_inode.link_count !=
+            INITRAFS_ROOT_LINK_COUNT ||
+        instance.inode_allocator.free_inodes !=
+            instance.superblock.inode_count - 2U)
+    {
+        goto fail;
+    }
+
+    if (!vfs_unmount(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    mounted = 0;
+
+    if (!filesystem_unregister(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    registered = 0;
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_VFS_RMDIR_OK\n"
+    );
+
+    return;
+
+fail:
+
+    if (mounted)
+    {
+        vfs_unmount(
+            &filesystem
+        );
+    }
+
+    if (registered)
+    {
+        filesystem_unregister(
+            &filesystem
+        );
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_VFS_RMDIR_FAIL\n"
+    );
+}
+
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -6234,6 +6404,7 @@ void kernel_main(void)
     initrafs_directory_path_test();
     initrafs_instance_test();
     initrafs_vfs_directory_test();
+    initrafs_vfs_rmdir_test();
     initrafs_vfs_test();
     vfs_test();
 

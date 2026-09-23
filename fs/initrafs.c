@@ -2534,6 +2534,38 @@ static int initrafs_vfs_readdir(
     return (int)listed;
 }
 
+static int initrafs_vfs_rmdir(
+    filesystem_t *filesystem,
+    const char *path
+)
+{
+    initrafs_instance_t *instance;
+
+    if (filesystem == 0 ||
+        path == 0)
+    {
+        return 0;
+    }
+
+    instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        instance->mounted == 0)
+    {
+        return 0;
+    }
+
+    return initrafs_path_remove_directory(
+        &instance->namespace,
+        &instance->inode_allocator,
+        path
+    );
+}
+
+
 int initrafs_vfs_init(
     filesystem_t *filesystem,
     initrafs_instance_t *instance
@@ -2578,7 +2610,7 @@ int initrafs_vfs_init(
         0;
 
     filesystem->rmdir =
-        0;
+        initrafs_vfs_rmdir;
 
     filesystem->readdir =
         initrafs_vfs_readdir;
