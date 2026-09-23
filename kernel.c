@@ -53,6 +53,7 @@ static void process_task_link_test(void);
 static void syscall_dispatcher_test(void);
 static void syscall_memory_test(void);
 static void initrafs_superblock_test(void);
+static void initrafs_root_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -3649,6 +3650,103 @@ static void initrafs_superblock_test(void)
     );
 }
 
+static void initrafs_root_test(void)
+{
+    initrafs_superblock_t superblock;
+    initrafs_disk_inode_t root_inode;
+    initrafs_disk_dirent_t root_entries[
+        INITRAFS_ROOT_DIR_ENTRIES
+    ];
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_root_inode_init(
+            &root_inode,
+            &superblock))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_root_directory_init(
+            root_entries,
+            INITRAFS_ROOT_DIR_ENTRIES))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (root_inode.inode_number !=
+            INITRAFS_ROOT_INODE ||
+        root_inode.type !=
+            INITRAFS_TYPE_DIRECTORY ||
+        root_inode.mode !=
+            INITRAFS_ROOT_MODE ||
+        root_inode.link_count !=
+            INITRAFS_ROOT_LINK_COUNT ||
+        root_inode.direct_blocks[0] !=
+            superblock.data_start)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (root_entries[0].inode_number !=
+            INITRAFS_ROOT_INODE ||
+        root_entries[0].type !=
+            INITRAFS_TYPE_DIRECTORY ||
+        root_entries[0].name_length != 1U ||
+        root_entries[0].name[0] != '.')
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (root_entries[1].inode_number !=
+            INITRAFS_ROOT_INODE ||
+        root_entries[1].type !=
+            INITRAFS_TYPE_DIRECTORY ||
+        root_entries[1].name_length != 2U ||
+        root_entries[1].name[0] != '.' ||
+        root_entries[1].name[1] != '.')
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    if (root_inode.size !=
+        INITRAFS_ROOT_DIR_ENTRIES *
+        sizeof(initrafs_disk_dirent_t))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_ROOT_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -3839,6 +3937,7 @@ void kernel_main(void)
     heap_paging_test();
     heap_dynamic_test();
     initrafs_superblock_test();
+    initrafs_root_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
