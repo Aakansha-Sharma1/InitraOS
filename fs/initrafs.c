@@ -2457,6 +2457,83 @@ static int initrafs_vfs_write(
 }
 
 
+static int initrafs_vfs_readdir(
+    filesystem_t *filesystem,
+    const char *path,
+    void *entry,
+    unsigned int entry_size
+)
+{
+    initrafs_instance_t *instance;
+    struct fs_inode *inode;
+    initrafs_namespace_node_t *node;
+    unsigned int listed = 0;
+    unsigned int capacity;
+
+    if (filesystem == 0 ||
+        path == 0 ||
+        entry == 0 ||
+        entry_size < sizeof(initrafs_disk_dirent_t))
+    {
+        return 0;
+    }
+
+    instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        instance->mounted == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_vfs_lookup(
+            filesystem,
+            path,
+            &inode))
+    {
+        return 0;
+    }
+
+    if (inode->type != INODE_TYPE_DIRECTORY)
+    {
+        return 0;
+    }
+
+    node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            inode->inode_number
+        );
+
+    if (node == 0 ||
+        node->inode != inode ||
+        node->disk_inode == 0 ||
+        node->entries == 0 ||
+        node->entry_count == 0)
+    {
+        return 0;
+    }
+
+    capacity =
+        entry_size /
+        sizeof(initrafs_disk_dirent_t);
+
+    if (!initrafs_directory_list(
+            node->entries,
+            node->entry_count,
+            (initrafs_disk_dirent_t *)entry,
+            capacity,
+            &listed))
+    {
+        return 0;
+    }
+
+    return (int)listed;
+}
+
 int initrafs_vfs_init(
     filesystem_t *filesystem,
     initrafs_instance_t *instance
@@ -2504,7 +2581,7 @@ int initrafs_vfs_init(
         0;
 
     filesystem->readdir =
-        0;
+        initrafs_vfs_readdir;
 
     filesystem->private_data =
         instance;

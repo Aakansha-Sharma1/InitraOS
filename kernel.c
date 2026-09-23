@@ -5950,6 +5950,90 @@ fail:
     );
 }
 
+static void initrafs_vfs_directory_test(void)
+{
+    initrafs_instance_t instance;
+    filesystem_t filesystem;
+    block_device_t device;
+
+    initrafs_disk_dirent_t entries[
+        INITRAFS_INSTANCE_DIRECTORY_ENTRIES
+    ];
+
+    unsigned int listed;
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_vfs_init(
+            &filesystem,
+            &instance) ||
+        !filesystem_register(
+            &filesystem) ||
+        !vfs_mount(
+            &filesystem,
+            &device))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_VFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    listed =
+        (unsigned int)vfs_readdir(
+            "/",
+            entries,
+            sizeof(entries)
+        );
+
+    if (listed != 2U ||
+        entries[0].inode_number !=
+            INITRAFS_ROOT_INODE ||
+        entries[0].name_length != 1U ||
+        entries[0].name[0] != '.' ||
+        entries[1].inode_number !=
+            INITRAFS_ROOT_INODE ||
+        entries[1].name_length != 2U ||
+        entries[1].name[0] != '.' ||
+        entries[1].name[1] != '.')
+    {
+        vfs_unmount(&filesystem);
+        filesystem_unregister(&filesystem);
+
+        c_serial_print(
+            "[InitraOS] INITRAFS_VFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!vfs_unmount(
+            &filesystem) ||
+        !filesystem_unregister(
+            &filesystem))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_VFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_VFS_DIRECTORY_OK\n"
+    );
+}
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -6149,6 +6233,7 @@ void kernel_main(void)
     initrafs_file_io_test();
     initrafs_directory_path_test();
     initrafs_instance_test();
+    initrafs_vfs_directory_test();
     initrafs_vfs_test();
     vfs_test();
 

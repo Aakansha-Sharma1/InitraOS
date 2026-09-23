@@ -91,6 +91,7 @@ EXPECTED = [
     "[InitraOS] INITRAFS_PATH_OK",
     "[InitraOS] INITRAFS_DIRECTORY_REMOVE_OK",
     "[InitraOS] INITRAFS_INSTANCE_OK",
+    "[InitraOS] INITRAFS_VFS_DIRECTORY_OK",
     "[InitraOS] INITRAFS_VFS_OK",
     "[InitraOS] VFS_OK",
     "[InitraOS] USER_PROGRAM_EXIT_OK",
