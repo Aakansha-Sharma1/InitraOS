@@ -2115,6 +2115,134 @@ int initrafs_namespace_unregister(
 }
 
 
+/* ---------- Runtime instance ---------- */
+
+int initrafs_instance_init(
+    initrafs_instance_t *instance,
+    block_device_t *device
+)
+{
+    if (instance == 0 ||
+        device == 0 ||
+        device->block_size != INITRAFS_BLOCK_SIZE ||
+        device->block_count == 0 ||
+        device->block_count >
+            INITRAFS_INSTANCE_MAX_BLOCKS)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        instance,
+        sizeof(initrafs_instance_t)
+    );
+
+    if (!initrafs_superblock_init(
+            &instance->superblock,
+            device->block_count))
+    {
+        return 0;
+    }
+
+    if (!initrafs_block_allocator_init(
+            &instance->block_allocator,
+            &instance->superblock,
+            instance->block_bitmap,
+            sizeof(instance->block_bitmap)))
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_allocator_init(
+            &instance->inode_allocator,
+            &instance->superblock,
+            instance->inode_bitmap,
+            sizeof(instance->inode_bitmap)))
+    {
+        return 0;
+    }
+
+    if (!initrafs_root_inode_init(
+            &instance->root_disk_inode,
+            &instance->superblock))
+    {
+        return 0;
+    }
+
+    if (!initrafs_root_directory_init(
+            instance->root_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES))
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_init(
+            &instance->root_inode,
+            INITRAFS_ROOT_INODE,
+            INODE_TYPE_DIRECTORY,
+            INITRAFS_ROOT_MODE))
+    {
+        return 0;
+    }
+
+    instance->root_inode.size =
+        instance->root_disk_inode.size;
+
+    instance->root_inode.link_count =
+        instance->root_disk_inode.link_count;
+
+    if (!initrafs_namespace_init(
+            &instance->namespace,
+            instance->namespace_nodes,
+            INITRAFS_DEFAULT_INODE_COUNT,
+            INITRAFS_ROOT_INODE))
+    {
+        return 0;
+    }
+
+    if (!initrafs_namespace_register(
+            &instance->namespace,
+            &instance->root_inode,
+            &instance->root_disk_inode,
+            instance->root_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES))
+    {
+        return 0;
+    }
+
+    instance->device =
+        device;
+
+    instance->mounted =
+        1U;
+
+    return 1;
+}
+
+
+int initrafs_instance_unmount(
+    initrafs_instance_t *instance
+)
+{
+    if (instance == 0 ||
+        instance->mounted == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * No dynamic allocations belong to the instance yet.
+     * Clearing the complete runtime object detaches the
+     * device and releases all in-memory filesystem state.
+     */
+    initrafs_zero_bytes(
+        instance,
+        sizeof(initrafs_instance_t)
+    );
+
+    return 1;
+}
+
 /* ---------- Path handling ---------- */
 
 static int initrafs_path_next_component(

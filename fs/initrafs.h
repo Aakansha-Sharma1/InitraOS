@@ -10,6 +10,20 @@
 #define INITRAFS_ROOT_LINK_COUNT  2U
 #define INITRAFS_ROOT_DIR_ENTRIES 2U
 
+/*
+ * Runtime instance limits.
+ *
+ * The first runtime instance implementation supports
+ * the current 16 MiB / 32768-block disk geometry.
+ */
+#define INITRAFS_INSTANCE_MAX_BLOCKS 32768U
+#define INITRAFS_INSTANCE_BLOCK_BITMAP_BYTES \
+    ((INITRAFS_INSTANCE_MAX_BLOCKS + 7U) / 8U)
+#define INITRAFS_INSTANCE_INODE_BITMAP_BYTES \
+    ((INITRAFS_DEFAULT_INODE_COUNT + 7U) / 8U)
+#define INITRAFS_INSTANCE_DIRECTORY_ENTRIES \
+    (INITRAFS_BLOCK_SIZE / sizeof(initrafs_disk_dirent_t))
+
 typedef struct
 {
     unsigned char *bitmap;
@@ -255,6 +269,50 @@ int initrafs_namespace_register(
 int initrafs_namespace_unregister(
     initrafs_namespace_t *namespace,
     inode_number_t inode_number
+);
+
+
+/* ---------- Runtime instance ---------- */
+
+typedef struct
+{
+    block_device_t *device;
+
+    initrafs_superblock_t superblock;
+
+    initrafs_block_allocator_t block_allocator;
+    initrafs_inode_allocator_t inode_allocator;
+
+    unsigned char block_bitmap[
+        INITRAFS_INSTANCE_BLOCK_BITMAP_BYTES
+    ];
+
+    unsigned char inode_bitmap[
+        INITRAFS_INSTANCE_INODE_BITMAP_BYTES
+    ];
+
+    struct fs_inode root_inode;
+    initrafs_disk_inode_t root_disk_inode;
+    initrafs_disk_dirent_t root_entries[
+        INITRAFS_INSTANCE_DIRECTORY_ENTRIES
+    ];
+
+    initrafs_namespace_node_t namespace_nodes[
+        INITRAFS_DEFAULT_INODE_COUNT
+    ];
+    initrafs_namespace_t namespace;
+
+    unsigned int mounted;
+
+} initrafs_instance_t;
+
+int initrafs_instance_init(
+    initrafs_instance_t *instance,
+    block_device_t *device
+);
+
+int initrafs_instance_unmount(
+    initrafs_instance_t *instance
 );
 
 

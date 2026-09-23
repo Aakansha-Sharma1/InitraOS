@@ -62,6 +62,7 @@ static void initrafs_directory_test(void);
 static void initrafs_inode_block_mapping_test(void);
 static void initrafs_file_io_test(void);
 static void initrafs_directory_path_test(void);
+static void initrafs_instance_test(void);
 static void vfs_test(void);
 
 
@@ -5661,6 +5662,86 @@ static void vfs_test(void)
     );
 }
 
+static void initrafs_instance_test(void)
+{
+    initrafs_instance_t instance;
+    block_device_t device;
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_instance_init(
+            &instance,
+            &device))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INSTANCE_FAIL\n"
+        );
+        return;
+    }
+
+    if (instance.mounted != 1U ||
+        instance.device != &device ||
+        instance.superblock.total_blocks !=
+            device.block_count ||
+        instance.superblock.root_inode !=
+            INITRAFS_ROOT_INODE ||
+        instance.root_inode.inode_number !=
+            INITRAFS_ROOT_INODE ||
+        instance.root_inode.type !=
+            INODE_TYPE_DIRECTORY ||
+        instance.root_disk_inode.type !=
+            INITRAFS_TYPE_DIRECTORY ||
+        instance.namespace.node_count != 1U ||
+        instance.namespace.root_inode !=
+            INITRAFS_ROOT_INODE ||
+        instance.namespace.nodes[0].inode !=
+            &instance.root_inode ||
+        instance.namespace.nodes[0].disk_inode !=
+            &instance.root_disk_inode)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INSTANCE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_instance_unmount(
+            &instance))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INSTANCE_FAIL\n"
+        );
+        return;
+    }
+
+    if (instance.mounted != 0U ||
+        instance.device != 0 ||
+        instance.namespace.node_count != 0U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INSTANCE_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_INSTANCE_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -5859,6 +5940,7 @@ void kernel_main(void)
     initrafs_inode_block_mapping_test();
     initrafs_file_io_test();
     initrafs_directory_path_test();
+    initrafs_instance_test();
     vfs_test();
 
     /*
