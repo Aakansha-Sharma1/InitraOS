@@ -58,6 +58,7 @@ static void initrafs_block_allocator_test(void);
 static void initrafs_inode_allocator_test(void);
 static void initrafs_inode_create_test(void);
 static void initrafs_directory_test(void);
+static void initrafs_inode_block_mapping_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -4475,6 +4476,262 @@ static void initrafs_directory_test(void)
     );
 }
 
+static void initrafs_inode_block_mapping_test(void)
+{
+    initrafs_superblock_t superblock;
+    initrafs_disk_inode_t inode;
+
+    unsigned int physical_block;
+
+    /*
+     * A fresh on-disk inode must start with
+     * all direct mappings clear.
+     */
+    for (unsigned int index = 0;
+         index < 8U;
+         index++)
+    {
+        inode.direct_blocks[index] = 0U;
+    }
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * These are valid data blocks for this test.
+     */
+    unsigned int block0 =
+        superblock.data_start + 1U;
+
+    unsigned int block1 =
+        superblock.data_start + 2U;
+
+    unsigned int block7 =
+        superblock.data_start + 8U;
+
+    /*
+     * Map logical blocks 0, 1 and 7.
+     */
+    if (!initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            0U,
+            block0) ||
+        !initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            1U,
+            block1) ||
+        !initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            7U,
+            block7))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Verify the three mappings.
+     */
+    if (!initrafs_inode_get_block(
+            &inode,
+            0U,
+            &physical_block) ||
+        physical_block != block0)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_get_block(
+            &inode,
+            1U,
+            &physical_block) ||
+        physical_block != block1)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_get_block(
+            &inode,
+            7U,
+            &physical_block) ||
+        physical_block != block7)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Logical block 8 is outside the direct
+     * block range and must be rejected.
+     */
+    if (initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            8U,
+            block0) ||
+        initrafs_inode_get_block(
+            &inode,
+            8U,
+            &physical_block) ||
+        initrafs_inode_unmap_block(
+            &inode,
+            8U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Metadata/root blocks cannot be mapped.
+     */
+    if (initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            2U,
+            INITRAFS_SUPERBLOCK_BLOCK) ||
+        initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            3U,
+            superblock.data_start))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Physical block zero is invalid.
+     */
+    if (initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            2U,
+            0U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Existing mappings cannot be overwritten.
+     */
+    if (initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            0U,
+            block1))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Unmap logical block 1 and verify that
+     * the mapping disappears.
+     */
+    if (!initrafs_inode_unmap_block(
+            &inode,
+            1U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_inode_get_block(
+            &inode,
+            1U,
+            &physical_block))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * The freed logical slot can be mapped again.
+     */
+    if (!initrafs_inode_map_block(
+            &inode,
+            &superblock,
+            1U,
+            block1))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_get_block(
+            &inode,
+            1U,
+            &physical_block) ||
+        physical_block != block1)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Double-unmap must fail.
+     */
+    if (!initrafs_inode_unmap_block(
+            &inode,
+            0U) ||
+        !initrafs_inode_unmap_block(
+            &inode,
+            1U) ||
+        !initrafs_inode_unmap_block(
+            &inode,
+            7U) ||
+        initrafs_inode_unmap_block(
+            &inode,
+            1U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_BLOCK_MAP_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_BLOCK_MAP_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -4670,6 +4927,7 @@ void kernel_main(void)
     initrafs_inode_allocator_test();
     initrafs_inode_create_test();
     initrafs_directory_test();
+    initrafs_inode_block_mapping_test();
 
     /*
      * Start the user task through the privilege-aware task switch.

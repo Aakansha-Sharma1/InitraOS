@@ -1069,3 +1069,118 @@ int initrafs_directory_remove(
 
     return 0;
 }
+#define INITRAFS_DIRECT_BLOCK_COUNT 8U
+
+static int initrafs_inode_logical_block_valid(
+    unsigned int logical_block
+)
+{
+    return logical_block <
+        INITRAFS_DIRECT_BLOCK_COUNT;
+}
+
+int initrafs_inode_map_block(
+    initrafs_disk_inode_t *inode,
+    const initrafs_superblock_t *superblock,
+    unsigned int logical_block,
+    unsigned int physical_block
+)
+{
+    if (inode == 0 ||
+        superblock == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_logical_block_valid(
+            logical_block))
+    {
+        return 0;
+    }
+
+    /*
+     * Physical block 0 is not a data block.
+     * The root-directory block is also reserved.
+     */
+    if (physical_block <=
+            superblock->data_start ||
+        physical_block >=
+            superblock->total_blocks)
+    {
+        return 0;
+    }
+
+    /*
+     * Do not overwrite an existing mapping.
+     */
+    if (inode->direct_blocks[
+            logical_block] != 0U)
+    {
+        return 0;
+    }
+
+    inode->direct_blocks[
+        logical_block] =
+        physical_block;
+
+    return 1;
+}
+
+int initrafs_inode_get_block(
+    const initrafs_disk_inode_t *inode,
+    unsigned int logical_block,
+    unsigned int *physical_block
+)
+{
+    if (inode == 0 ||
+        physical_block == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_logical_block_valid(
+            logical_block))
+    {
+        return 0;
+    }
+
+    if (inode->direct_blocks[
+            logical_block] == 0U)
+    {
+        return 0;
+    }
+
+    *physical_block =
+        inode->direct_blocks[
+            logical_block];
+
+    return 1;
+}
+
+int initrafs_inode_unmap_block(
+    initrafs_disk_inode_t *inode,
+    unsigned int logical_block
+)
+{
+    if (inode == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_logical_block_valid(
+            logical_block))
+    {
+        return 0;
+    }
+
+    if (inode->direct_blocks[
+            logical_block] == 0U)
+    {
+        return 0;
+    }
+
+    inode->direct_blocks[
+        logical_block] = 0U;
+
+    return 1;
+}

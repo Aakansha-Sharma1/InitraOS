@@ -122,4 +122,22 @@ int initrafs_directory_remove(
     const char *name
 );
 
+int initrafs_inode_map_block(
+    initrafs_disk_inode_t *inode,
+    const initrafs_superblock_t *superblock,
+    unsigned int logical_block,
+    unsigned int physical_block
+);
+
+int initrafs_inode_get_block(
+    const initrafs_disk_inode_t *inode,
+    unsigned int logical_block,
+    unsigned int *physical_block
+);
+
+int initrafs_inode_unmap_block(
+    initrafs_disk_inode_t *inode,
+    unsigned int logical_block
+);
+
 #endif
