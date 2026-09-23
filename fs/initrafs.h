@@ -87,4 +87,18 @@ int initrafs_inode_free(
     unsigned int inode
 );
 
+int initrafs_inode_init(
+    struct fs_inode *inode,
+    inode_number_t inode_number,
+    unsigned int type,
+    unsigned int mode
+);
+
+int initrafs_inode_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    unsigned int type,
+    unsigned int mode
+);
+
 #endif

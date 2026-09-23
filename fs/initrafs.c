@@ -684,3 +684,120 @@ int initrafs_inode_free(
 
     return 1;
 }
+static int initrafs_inode_type_valid(
+    unsigned int type
+)
+{
+    switch (type)
+    {
+        case INODE_TYPE_FILE:
+        case INODE_TYPE_DIRECTORY:
+        case INODE_TYPE_SYMLINK:
+        case INODE_TYPE_DEVICE:
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
+int initrafs_inode_init(
+    struct fs_inode *inode,
+    inode_number_t inode_number,
+    unsigned int type,
+    unsigned int mode
+)
+{
+    if (inode == 0 ||
+        inode_number == INITRAFS_UNUSED_INODE ||
+        !initrafs_inode_type_valid(type))
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        inode,
+        sizeof(struct fs_inode)
+    );
+
+    inode->inode_number =
+        inode_number;
+
+    inode->type =
+        type;
+
+    inode->mode =
+        mode;
+
+    inode->flags = 0;
+    inode->size = 0;
+
+    inode->owner = 0;
+    inode->group = 0;
+
+    /*
+     * Directories begin with . and ..
+     * and therefore have two links.
+     * Other objects begin with one link.
+     */
+    if (type == INODE_TYPE_DIRECTORY)
+    {
+        inode->link_count = 2U;
+    }
+    else
+    {
+        inode->link_count = 1U;
+    }
+
+    inode->created_time = 0;
+    inode->modified_time = 0;
+    inode->accessed_time = 0;
+
+    inode->filesystem_private = 0;
+
+    return 1;
+}
+
+int initrafs_inode_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    unsigned int type,
+    unsigned int mode
+)
+{
+    unsigned int inode_number;
+
+    if (allocator == 0 ||
+        inode == 0 ||
+        !initrafs_inode_type_valid(type))
+    {
+        return 0;
+    }
+
+    inode_number =
+        initrafs_inode_alloc(
+            allocator
+        );
+
+    if (inode_number ==
+        INITRAFS_UNUSED_INODE)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_init(
+            inode,
+            inode_number,
+            type,
+            mode))
+    {
+        initrafs_inode_free(
+            allocator,
+            inode_number
+        );
+
+        return 0;
+    }
+
+    return 1;
+}

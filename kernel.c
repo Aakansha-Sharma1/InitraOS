@@ -56,6 +56,7 @@ static void initrafs_superblock_test(void);
 static void initrafs_root_test(void);
 static void initrafs_block_allocator_test(void);
 static void initrafs_inode_allocator_test(void);
+static void initrafs_inode_create_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -4047,6 +4048,129 @@ static void initrafs_inode_allocator_test(void)
     );
 }
 
+static void initrafs_inode_create_test(void)
+{
+    #define INITRAFS_TEST_INODE_BITMAP_BYTES 16U
+
+    initrafs_superblock_t superblock;
+
+    initrafs_inode_allocator_t allocator;
+
+    unsigned char bitmap[
+        INITRAFS_TEST_INODE_BITMAP_BYTES
+    ];
+
+    struct fs_inode file_inode;
+    struct fs_inode directory_inode;
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_allocator_init(
+            &allocator,
+            &superblock,
+            bitmap,
+            sizeof(bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_create(
+            &allocator,
+            &file_inode,
+            INODE_TYPE_FILE,
+            0644U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (file_inode.inode_number != 2U ||
+        file_inode.type != INODE_TYPE_FILE ||
+        file_inode.mode != 0644U ||
+        file_inode.size != 0U ||
+        file_inode.link_count != 1U ||
+        file_inode.owner != 0U ||
+        file_inode.group != 0U ||
+        file_inode.filesystem_private != 0)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_create(
+            &allocator,
+            &directory_inode,
+            INODE_TYPE_DIRECTORY,
+            0755U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (directory_inode.inode_number != 3U ||
+        directory_inode.type != INODE_TYPE_DIRECTORY ||
+        directory_inode.mode != 0755U ||
+        directory_inode.size != 0U ||
+        directory_inode.link_count != 2U ||
+        directory_inode.owner != 0U ||
+        directory_inode.group != 0U ||
+        directory_inode.filesystem_private != 0)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * The allocator owns the inode number.
+     * Freeing both objects must return them to
+     * the allocator for later reuse.
+     */
+    if (!initrafs_inode_free(
+            &allocator,
+            file_inode.inode_number) ||
+        !initrafs_inode_free(
+            &allocator,
+            directory_inode.inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (allocator.free_inodes !=
+        superblock.inode_count - 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_INODE_CREATE_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -4240,6 +4364,7 @@ void kernel_main(void)
     initrafs_root_test();
     initrafs_block_allocator_test();
     initrafs_inode_allocator_test();
+    initrafs_inode_create_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
