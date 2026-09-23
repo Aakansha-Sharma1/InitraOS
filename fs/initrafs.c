@@ -1745,3 +1745,755 @@ int initrafs_file_write(
 
     return (int)bytes_done;
 }
+
+
+/* ---------- Directory creation / listing ---------- */
+
+int initrafs_directory_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_capacity,
+    unsigned int mode,
+    inode_number_t parent_inode
+)
+{
+    unsigned int inode_number;
+
+    if (allocator == 0 ||
+        inode == 0 ||
+        disk_inode == 0 ||
+        entries == 0 ||
+        entry_capacity < INITRAFS_ROOT_DIR_ENTRIES ||
+        parent_inode == INITRAFS_UNUSED_INODE)
+    {
+        return 0;
+    }
+
+    inode_number =
+        initrafs_inode_alloc(
+            allocator
+        );
+
+    if (inode_number ==
+        INITRAFS_UNUSED_INODE)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_init(
+            inode,
+            inode_number,
+            INODE_TYPE_DIRECTORY,
+            mode))
+    {
+        initrafs_inode_free(
+            allocator,
+            inode_number
+        );
+
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        disk_inode,
+        sizeof(initrafs_disk_inode_t)
+    );
+
+    disk_inode->inode_number =
+        inode_number;
+
+    disk_inode->type =
+        INITRAFS_TYPE_DIRECTORY;
+
+    disk_inode->mode =
+        mode;
+
+    disk_inode->size =
+        INITRAFS_ROOT_DIR_ENTRIES *
+        sizeof(initrafs_disk_dirent_t);
+
+    disk_inode->owner = 0;
+    disk_inode->group = 0;
+    disk_inode->link_count = 2U;
+
+    if (!initrafs_root_directory_init(
+            entries,
+            entry_capacity))
+    {
+        initrafs_inode_free(
+            allocator,
+            inode_number
+        );
+
+        return 0;
+    }
+
+    entries[0].inode_number =
+        inode_number;
+
+    entries[1].inode_number =
+        parent_inode;
+
+    return 1;
+}
+
+int initrafs_directory_is_empty(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count
+)
+{
+    if (entries == 0 ||
+        entry_count < INITRAFS_ROOT_DIR_ENTRIES)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (entries[index].inode_number ==
+            INITRAFS_UNUSED_INODE)
+        {
+            continue;
+        }
+
+        if (entries[index].name_length == 1U &&
+            entries[index].name[0] == '.')
+        {
+            continue;
+        }
+
+        if (entries[index].name_length == 2U &&
+            entries[index].name[0] == '.' &&
+            entries[index].name[1] == '.')
+        {
+            continue;
+        }
+
+        return 0;
+    }
+
+    return 1;
+}
+
+int initrafs_directory_list(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    initrafs_disk_dirent_t *output,
+    unsigned int output_capacity,
+    unsigned int *listed
+)
+{
+    unsigned int required = 0;
+
+    if (entries == 0 ||
+        output == 0 ||
+        listed == 0 ||
+        entry_count == 0)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (entries[index].inode_number !=
+            INITRAFS_UNUSED_INODE)
+        {
+            required++;
+        }
+    }
+
+    if (output_capacity < required)
+    {
+        return 0;
+    }
+
+    unsigned int output_index = 0;
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (entries[index].inode_number ==
+            INITRAFS_UNUSED_INODE)
+        {
+            continue;
+        }
+
+        output[output_index++] =
+            entries[index];
+    }
+
+    *listed =
+        output_index;
+
+    return 1;
+}
+
+
+/* ---------- In-memory namespace ---------- */
+
+static initrafs_namespace_node_t *
+initrafs_namespace_find(
+    const initrafs_namespace_t *namespace,
+    inode_number_t inode_number
+)
+{
+    if (namespace == 0 ||
+        namespace->nodes == 0)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < namespace->node_count;
+         index++)
+    {
+        if (namespace->nodes[index].inode == 0 ||
+            namespace->nodes[index].disk_inode == 0)
+        {
+            continue;
+        }
+
+        if (namespace->nodes[index].inode->inode_number ==
+            inode_number)
+        {
+            return &namespace->nodes[index];
+        }
+    }
+
+    return 0;
+}
+
+int initrafs_namespace_init(
+    initrafs_namespace_t *namespace,
+    initrafs_namespace_node_t *nodes,
+    unsigned int node_capacity,
+    inode_number_t root_inode
+)
+{
+    if (namespace == 0 ||
+        nodes == 0 ||
+        node_capacity == 0 ||
+        root_inode == INITRAFS_UNUSED_INODE)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        nodes,
+        node_capacity *
+        sizeof(initrafs_namespace_node_t)
+    );
+
+    namespace->nodes =
+        nodes;
+
+    namespace->node_count =
+        0;
+
+    namespace->node_capacity =
+        node_capacity;
+
+    namespace->root_inode =
+        root_inode;
+
+    return 1;
+}
+
+int initrafs_namespace_register(
+    initrafs_namespace_t *namespace,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count
+)
+{
+    if (namespace == 0 ||
+        namespace->nodes == 0 ||
+        inode == 0 ||
+        disk_inode == 0 ||
+        inode->inode_number ==
+            INITRAFS_UNUSED_INODE ||
+        inode->inode_number !=
+            disk_inode->inode_number ||
+        inode->type !=
+            disk_inode->type ||
+        namespace->node_count >=
+            namespace->node_capacity)
+    {
+        return 0;
+    }
+
+    if (inode->type ==
+            INODE_TYPE_DIRECTORY &&
+        (entries == 0 ||
+         entry_count < INITRAFS_ROOT_DIR_ENTRIES))
+    {
+        return 0;
+    }
+
+    if (initrafs_namespace_find(
+            namespace,
+            inode->inode_number) != 0)
+    {
+        return 0;
+    }
+
+    initrafs_namespace_node_t *node =
+        &namespace->nodes[
+            namespace->node_count
+        ];
+
+    node->inode =
+        inode;
+
+    node->disk_inode =
+        disk_inode;
+
+    node->entries =
+        entries;
+
+    node->entry_count =
+        entry_count;
+
+    namespace->node_count++;
+
+    return 1;
+}
+
+int initrafs_namespace_unregister(
+    initrafs_namespace_t *namespace,
+    inode_number_t inode_number
+)
+{
+    if (namespace == 0 ||
+        namespace->nodes == 0 ||
+        inode_number == INITRAFS_UNUSED_INODE ||
+        inode_number == namespace->root_inode)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < namespace->node_count;
+         index++)
+    {
+        if (namespace->nodes[index].inode == 0 ||
+            namespace->nodes[index].inode->inode_number !=
+                inode_number)
+        {
+            continue;
+        }
+
+        for (unsigned int move = index;
+             move + 1 < namespace->node_count;
+             move++)
+        {
+            namespace->nodes[move] =
+                namespace->nodes[move + 1];
+        }
+
+        initrafs_zero_bytes(
+            &namespace->nodes[
+                namespace->node_count - 1U
+            ],
+            sizeof(initrafs_namespace_node_t)
+        );
+
+        namespace->node_count--;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+
+/* ---------- Path handling ---------- */
+
+static int initrafs_path_next_component(
+    const char *path,
+    unsigned int *position,
+    char *component
+)
+{
+    unsigned int index = 0;
+    unsigned int cursor;
+
+    if (path == 0 ||
+        position == 0 ||
+        component == 0)
+    {
+        return 0;
+    }
+
+    cursor =
+        *position;
+
+    while (path[cursor] == '/')
+    {
+        cursor++;
+    }
+
+    if (path[cursor] == 0)
+    {
+        *position = cursor;
+        return 0;
+    }
+
+    while (path[cursor] != 0 &&
+           path[cursor] != '/')
+    {
+        if (index >=
+            INITRAFS_MAX_NAME_LENGTH)
+        {
+            return -1;
+        }
+
+        component[index++] =
+            path[cursor++];
+
+    }
+
+    component[index] = 0;
+    *position = cursor;
+
+    return 1;
+}
+
+int initrafs_path_lookup(
+    const initrafs_namespace_t *namespace,
+    const char *path,
+    inode_number_t *inode_number
+)
+{
+    unsigned int position = 0;
+    inode_number_t current_inode;
+    char component[
+        INITRAFS_MAX_NAME_LENGTH + 1U
+    ];
+
+    if (namespace == 0 ||
+        path == 0 ||
+        inode_number == 0 ||
+        path[0] == 0)
+    {
+        return 0;
+    }
+
+    current_inode =
+        namespace->root_inode;
+
+    while (1)
+    {
+        int result =
+            initrafs_path_next_component(
+                path,
+                &position,
+                component
+            );
+
+        if (result == 0)
+        {
+            *inode_number =
+                current_inode;
+
+            return 1;
+        }
+
+        if (result < 0)
+        {
+            return 0;
+        }
+
+        initrafs_namespace_node_t *current_node =
+            initrafs_namespace_find(
+                namespace,
+                current_inode
+            );
+
+        if (current_node == 0 ||
+            current_node->inode == 0 ||
+            current_node->disk_inode == 0 ||
+            current_node->inode->type !=
+                INODE_TYPE_DIRECTORY ||
+            current_node->disk_inode->type !=
+                INITRAFS_TYPE_DIRECTORY ||
+            current_node->entries == 0 ||
+            current_node->entry_count == 0)
+        {
+            return 0;
+        }
+
+        if (component[0] == '.' &&
+            component[1] == 0)
+        {
+            continue;
+        }
+
+        if (component[0] == '.' &&
+            component[1] == '.' &&
+            component[2] == 0)
+        {
+            if (!initrafs_directory_lookup(
+                    current_node->entries,
+                    current_node->entry_count,
+                    "..",
+                    &current_inode))
+            {
+                return 0;
+            }
+
+            continue;
+        }
+
+        if (!initrafs_directory_lookup(
+                current_node->entries,
+                current_node->entry_count,
+                component,
+                &current_inode))
+        {
+            return 0;
+        }
+    }
+}
+
+int initrafs_path_remove_directory(
+    initrafs_namespace_t *namespace,
+    initrafs_inode_allocator_t *allocator,
+    const char *path
+)
+{
+    inode_number_t child_inode;
+    inode_number_t parent_inode;
+    initrafs_namespace_node_t *child_node;
+    initrafs_namespace_node_t *parent_node;
+    const char *last_component;
+    unsigned int position;
+    unsigned int component_start;
+    char component[
+        INITRAFS_MAX_NAME_LENGTH + 1U
+    ];
+
+    if (namespace == 0 ||
+        allocator == 0 ||
+        path == 0 ||
+        path[0] == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_path_lookup(
+            namespace,
+            path,
+            &child_inode))
+    {
+        return 0;
+    }
+
+    if (child_inode ==
+        namespace->root_inode)
+    {
+        return 0;
+    }
+
+    child_node =
+        initrafs_namespace_find(
+            namespace,
+            child_inode
+        );
+
+    if (child_node == 0 ||
+        child_node->inode == 0 ||
+        child_node->disk_inode == 0 ||
+        child_node->inode->type !=
+            INODE_TYPE_DIRECTORY ||
+        child_node->entries == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_directory_is_empty(
+            child_node->entries,
+            child_node->entry_count))
+    {
+        return 0;
+    }
+
+    if (!initrafs_directory_lookup(
+            child_node->entries,
+            child_node->entry_count,
+            "..",
+            &parent_inode))
+    {
+        return 0;
+    }
+
+    parent_node =
+        initrafs_namespace_find(
+            namespace,
+            parent_inode
+        );
+
+    if (parent_node == 0 ||
+        parent_node->inode == 0 ||
+        parent_node->disk_inode == 0 ||
+        parent_node->entries == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Recover the final path component.
+     */
+    position = 0;
+    component_start = 0;
+    last_component = path;
+
+    while (path[position] != 0)
+    {
+        if (path[position] == '/')
+        {
+            component_start =
+                position + 1U;
+
+            while (path[component_start] == '/')
+            {
+                component_start++;
+            }
+
+            last_component =
+                &path[component_start];
+        }
+
+        position++;
+    }
+
+    /*
+     * Normalize the final component through the same
+     * validation used by ordinary path lookup.
+     */
+    position = 0;
+
+    while (path[position] != 0)
+    {
+        if (path[position] == '/')
+        {
+            position++;
+            continue;
+        }
+
+        break;
+    }
+
+    if (last_component[0] == 0)
+    {
+        return 0;
+    }
+
+    unsigned int temp_position = 0;
+    int component_result;
+
+    /*
+     * Scan every component and keep the final one.
+     */
+    position = 0;
+    component[0] = 0;
+
+    while ((component_result =
+                initrafs_path_next_component(
+                    path,
+                    &position,
+                    component)) > 0)
+    {
+        /*
+         * The final component is the one remaining when
+         * the parser reaches the end of the path.
+         */
+        temp_position = position;
+    }
+
+    (void)temp_position;
+
+    if (component[0] == 0 ||
+        (component[0] == '.' &&
+         component[1] == 0) ||
+        (component[0] == '.' &&
+         component[1] == '.' &&
+         component[2] == 0))
+    {
+        return 0;
+    }
+
+    /*
+     * The directory must be directly linked from its parent.
+     * Find the matching parent entry by inode number.
+     */
+    unsigned int found = 0;
+
+    for (unsigned int index = 0;
+         index < parent_node->entry_count;
+         index++)
+    {
+        if (parent_node->entries[index].inode_number ==
+            child_inode &&
+            parent_node->entries[index].type ==
+                INITRAFS_TYPE_DIRECTORY)
+        {
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found)
+    {
+        return 0;
+    }
+
+    /*
+     * Remove the parent entry first.
+     */
+    if (!initrafs_directory_remove(
+            parent_node->entries,
+            parent_node->entry_count,
+            component))
+    {
+        return 0;
+    }
+
+    /*
+     * A child directory contributes one link to
+     * its parent. Drop that link now.
+     */
+    if (parent_node->inode->link_count > 0)
+    {
+        parent_node->inode->link_count--;
+    }
+
+    if (parent_node->disk_inode->link_count > 0)
+    {
+        parent_node->disk_inode->link_count--;
+    }
+
+    if (!initrafs_namespace_unregister(
+            namespace,
+            child_inode))
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_free(
+            allocator,
+            child_inode))
+    {
+        return 0;
+    }
+
+    return 1;
+}

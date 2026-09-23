@@ -60,6 +60,7 @@ static void initrafs_inode_create_test(void);
 static void initrafs_directory_test(void);
 static void initrafs_inode_block_mapping_test(void);
 static void initrafs_file_io_test(void);
+static void initrafs_directory_path_test(void);
 
 
 static int page_map(
@@ -5276,6 +5277,373 @@ static void initrafs_file_io_test(void)
     );
 }
 
+static void initrafs_directory_path_test(void)
+{
+    #define INITRAFS_TEST_NAMESPACE_NODES 4U
+    #define INITRAFS_TEST_DIRECTORY_CAPACITY 8U
+
+    initrafs_superblock_t superblock;
+    initrafs_inode_allocator_t inode_allocator;
+
+    unsigned char inode_bitmap[16U];
+
+    struct fs_inode root_inode;
+    struct fs_inode docs_inode;
+    struct fs_inode file_inode;
+
+    initrafs_disk_inode_t root_disk_inode;
+    initrafs_disk_inode_t docs_disk_inode;
+    initrafs_disk_inode_t file_disk_inode;
+
+    initrafs_disk_dirent_t root_entries[
+        INITRAFS_TEST_DIRECTORY_CAPACITY
+    ];
+
+    initrafs_disk_dirent_t docs_entries[
+        INITRAFS_TEST_DIRECTORY_CAPACITY
+    ];
+
+    initrafs_namespace_node_t nodes[
+        INITRAFS_TEST_NAMESPACE_NODES
+    ];
+
+    initrafs_namespace_t namespace;
+
+    initrafs_disk_dirent_t listed[
+        INITRAFS_TEST_DIRECTORY_CAPACITY
+    ];
+
+    unsigned int listed_count;
+    inode_number_t inode_number;
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_allocator_init(
+            &inode_allocator,
+            &superblock,
+            inode_bitmap,
+            sizeof(inode_bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_root_inode_init(
+            &root_disk_inode,
+            &superblock) ||
+        !initrafs_root_directory_init(
+            root_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY) ||
+        !initrafs_inode_init(
+            &root_inode,
+            INITRAFS_ROOT_INODE,
+            INODE_TYPE_DIRECTORY,
+            INITRAFS_ROOT_MODE))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    root_inode.size =
+        root_disk_inode.size;
+
+    root_inode.link_count =
+        root_disk_inode.link_count;
+
+    if (!initrafs_directory_create(
+            &inode_allocator,
+            &docs_inode,
+            &docs_disk_inode,
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            0755U,
+            INITRAFS_ROOT_INODE))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (docs_inode.type !=
+            INODE_TYPE_DIRECTORY ||
+        docs_disk_inode.type !=
+            INITRAFS_TYPE_DIRECTORY ||
+        docs_inode.inode_number !=
+            docs_disk_inode.inode_number ||
+        docs_entries[0].inode_number !=
+            docs_inode.inode_number ||
+        docs_entries[1].inode_number !=
+            INITRAFS_ROOT_INODE ||
+        docs_entries[0].name_length != 1U ||
+        docs_entries[1].name_length != 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_add(
+            root_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            docs_inode.inode_number,
+            INITRAFS_TYPE_DIRECTORY,
+            "docs"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    root_inode.link_count++;
+    root_disk_inode.link_count++;
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_DIRECTORY_CREATE_OK\n"
+    );
+
+    if (!initrafs_file_create(
+            &inode_allocator,
+            &file_inode,
+            &file_disk_inode,
+            0644U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_LIST_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_add(
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            file_inode.inode_number,
+            INITRAFS_TYPE_FILE,
+            "readme"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_LIST_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_list(
+            root_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            listed,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            &listed_count) ||
+        listed_count != 3U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_LIST_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_list(
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            listed,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            &listed_count) ||
+        listed_count != 3U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_LIST_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_DIRECTORY_LIST_OK\n"
+    );
+
+    if (!initrafs_namespace_init(
+            &namespace,
+            nodes,
+            INITRAFS_TEST_NAMESPACE_NODES,
+            INITRAFS_ROOT_INODE) ||
+        !initrafs_namespace_register(
+            &namespace,
+            &root_inode,
+            &root_disk_inode,
+            root_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY) ||
+        !initrafs_namespace_register(
+            &namespace,
+            &docs_inode,
+            &docs_disk_inode,
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY) ||
+        !initrafs_namespace_register(
+            &namespace,
+            &file_inode,
+            &file_disk_inode,
+            0,
+            0))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_path_lookup(
+            &namespace,
+            "/",
+            &inode_number) ||
+        inode_number != INITRAFS_ROOT_INODE)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_path_lookup(
+            &namespace,
+            "/docs",
+            &inode_number) ||
+        inode_number != docs_inode.inode_number)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_path_lookup(
+            &namespace,
+            "//docs//readme",
+            &inode_number) ||
+        inode_number != file_inode.inode_number)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_path_lookup(
+            &namespace,
+            "/docs/../docs/readme",
+            &inode_number) ||
+        inode_number != file_inode.inode_number)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_path_lookup(
+            &namespace,
+            "/docs/readme/more",
+            &inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_PATH_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_PATH_OK\n"
+    );
+
+    if (initrafs_path_remove_directory(
+            &namespace,
+            &inode_allocator,
+            "/docs"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_remove(
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY,
+            "readme") ||
+        !initrafs_inode_free(
+            &inode_allocator,
+            file_inode.inode_number) ||
+        !initrafs_namespace_unregister(
+            &namespace,
+            file_inode.inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_is_empty(
+            docs_entries,
+            INITRAFS_TEST_DIRECTORY_CAPACITY))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_path_remove_directory(
+            &namespace,
+            &inode_allocator,
+            "/docs"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_path_lookup(
+            &namespace,
+            "/docs",
+            &inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    if (root_inode.link_count !=
+            INITRAFS_ROOT_LINK_COUNT ||
+        root_disk_inode.link_count !=
+            INITRAFS_ROOT_LINK_COUNT ||
+        inode_allocator.free_inodes !=
+            superblock.inode_count - 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_REMOVE_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_DIRECTORY_REMOVE_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -5471,7 +5839,9 @@ void kernel_main(void)
     initrafs_inode_allocator_test();
     initrafs_inode_create_test();
     initrafs_directory_test();
-    initrafs_inode_block_mapping_test();    initrafs_file_io_test();
+    initrafs_inode_block_mapping_test();
+    initrafs_file_io_test();
+    initrafs_directory_path_test();
 
     /*
      * Start the user task through the privilege-aware task switch.

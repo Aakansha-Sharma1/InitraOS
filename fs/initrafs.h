@@ -36,6 +36,9 @@ typedef struct
 
 } initrafs_block_allocator_t;
 
+
+/* ---------- Superblock / Root ---------- */
+
 int initrafs_superblock_init(
     initrafs_superblock_t *superblock,
     unsigned int total_blocks
@@ -55,6 +58,9 @@ int initrafs_root_directory_init(
     unsigned int entry_count
 );
 
+
+/* ---------- Block allocator ---------- */
+
 int initrafs_block_allocator_init(
     initrafs_block_allocator_t *allocator,
     initrafs_superblock_t *superblock,
@@ -70,6 +76,9 @@ int initrafs_block_free(
     initrafs_block_allocator_t *allocator,
     unsigned int block
 );
+
+
+/* ---------- Inode allocator ---------- */
 
 int initrafs_inode_allocator_init(
     initrafs_inode_allocator_t *allocator,
@@ -87,6 +96,9 @@ int initrafs_inode_free(
     unsigned int inode
 );
 
+
+/* ---------- In-memory inode ---------- */
+
 int initrafs_inode_init(
     struct fs_inode *inode,
     inode_number_t inode_number,
@@ -100,6 +112,9 @@ int initrafs_inode_create(
     unsigned int type,
     unsigned int mode
 );
+
+
+/* ---------- Directory entries ---------- */
 
 int initrafs_directory_lookup(
     const initrafs_disk_dirent_t *entries,
@@ -122,6 +137,9 @@ int initrafs_directory_remove(
     const char *name
 );
 
+
+/* ---------- Direct file block mapping ---------- */
+
 int initrafs_inode_map_block(
     initrafs_disk_inode_t *inode,
     const initrafs_superblock_t *superblock,
@@ -140,7 +158,9 @@ int initrafs_inode_unmap_block(
     unsigned int logical_block
 );
 
-#endif
+
+/* ---------- File creation / I/O ---------- */
+
 int initrafs_file_create(
     initrafs_inode_allocator_t *allocator,
     struct fs_inode *inode,
@@ -166,3 +186,90 @@ int initrafs_file_write(
     const void *buffer,
     unsigned int size
 );
+
+
+/* ---------- Directory creation / listing ---------- */
+
+int initrafs_directory_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_capacity,
+    unsigned int mode,
+    inode_number_t parent_inode
+);
+
+int initrafs_directory_is_empty(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count
+);
+
+int initrafs_directory_list(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    initrafs_disk_dirent_t *output,
+    unsigned int output_capacity,
+    unsigned int *listed
+);
+
+
+/* ---------- In-memory namespace ---------- */
+
+typedef struct
+{
+    struct fs_inode *inode;
+    initrafs_disk_inode_t *disk_inode;
+
+    initrafs_disk_dirent_t *entries;
+    unsigned int entry_count;
+
+} initrafs_namespace_node_t;
+
+typedef struct
+{
+    initrafs_namespace_node_t *nodes;
+
+    unsigned int node_count;
+    unsigned int node_capacity;
+
+    inode_number_t root_inode;
+
+} initrafs_namespace_t;
+
+int initrafs_namespace_init(
+    initrafs_namespace_t *namespace,
+    initrafs_namespace_node_t *nodes,
+    unsigned int node_capacity,
+    inode_number_t root_inode
+);
+
+int initrafs_namespace_register(
+    initrafs_namespace_t *namespace,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count
+);
+
+int initrafs_namespace_unregister(
+    initrafs_namespace_t *namespace,
+    inode_number_t inode_number
+);
+
+
+/* ---------- Path handling ---------- */
+
+int initrafs_path_lookup(
+    const initrafs_namespace_t *namespace,
+    const char *path,
+    inode_number_t *inode_number
+);
+
+int initrafs_path_remove_directory(
+    initrafs_namespace_t *namespace,
+    initrafs_inode_allocator_t *allocator,
+    const char *path
+);
+
+#endif
