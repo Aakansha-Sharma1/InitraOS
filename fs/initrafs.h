@@ -15,6 +15,19 @@ typedef struct
     unsigned char *bitmap;
 
     unsigned int bitmap_bytes;
+    unsigned int total_inodes;
+    unsigned int first_allocatable_inode;
+    unsigned int free_inodes;
+
+    initrafs_superblock_t *superblock;
+
+} initrafs_inode_allocator_t;
+
+typedef struct
+{
+    unsigned char *bitmap;
+
+    unsigned int bitmap_bytes;
     unsigned int total_blocks;
     unsigned int first_data_block;
     unsigned int free_blocks;
@@ -56,6 +69,22 @@ unsigned int initrafs_block_alloc(
 int initrafs_block_free(
     initrafs_block_allocator_t *allocator,
     unsigned int block
+);
+
+int initrafs_inode_allocator_init(
+    initrafs_inode_allocator_t *allocator,
+    initrafs_superblock_t *superblock,
+    unsigned char *bitmap,
+    unsigned int bitmap_bytes
+);
+
+unsigned int initrafs_inode_alloc(
+    initrafs_inode_allocator_t *allocator
+);
+
+int initrafs_inode_free(
+    initrafs_inode_allocator_t *allocator,
+    unsigned int inode
 );
 
 #endif

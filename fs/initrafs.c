@@ -473,3 +473,214 @@ int initrafs_block_free(
 
     return 1;
 }
+
+static unsigned int initrafs_inode_bitmap_bytes(
+    unsigned int inode_count
+)
+{
+    return (inode_count + 7U) / 8U;
+}
+
+static unsigned int initrafs_inode_bitmap_index(
+    unsigned int inode
+)
+{
+    return inode >> 3;
+}
+
+static unsigned char initrafs_inode_bitmap_mask(
+    unsigned int inode
+)
+{
+    return (unsigned char)
+        (1U << (inode & 7U));
+}
+
+static int initrafs_inode_is_marked(
+    const initrafs_inode_allocator_t *allocator,
+    unsigned int inode
+)
+{
+    return (
+        allocator->bitmap[
+            initrafs_inode_bitmap_index(inode)
+        ] &
+        initrafs_inode_bitmap_mask(inode)
+    ) != 0;
+}
+
+static void initrafs_inode_mark_used(
+    initrafs_inode_allocator_t *allocator,
+    unsigned int inode
+)
+{
+    allocator->bitmap[
+        initrafs_inode_bitmap_index(inode)
+    ] |=
+        initrafs_inode_bitmap_mask(inode);
+}
+
+static void initrafs_inode_mark_free(
+    initrafs_inode_allocator_t *allocator,
+    unsigned int inode
+)
+{
+    allocator->bitmap[
+        initrafs_inode_bitmap_index(inode)
+    ] &=
+        (unsigned char)
+        ~initrafs_inode_bitmap_mask(inode);
+}
+
+int initrafs_inode_allocator_init(
+    initrafs_inode_allocator_t *allocator,
+    initrafs_superblock_t *superblock,
+    unsigned char *bitmap,
+    unsigned int bitmap_bytes
+)
+{
+    unsigned int required_bitmap_bytes;
+
+    if (allocator == 0 ||
+        superblock == 0 ||
+        bitmap == 0)
+    {
+        return 0;
+    }
+
+    if (superblock->inode_count <=
+        INITRAFS_ROOT_INODE)
+    {
+        return 0;
+    }
+
+    required_bitmap_bytes =
+        initrafs_inode_bitmap_bytes(
+            superblock->inode_count
+        );
+
+    if (bitmap_bytes <
+        required_bitmap_bytes)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        bitmap,
+        required_bitmap_bytes
+    );
+
+    allocator->bitmap =
+        bitmap;
+
+    allocator->bitmap_bytes =
+        required_bitmap_bytes;
+
+    allocator->total_inodes =
+        superblock->inode_count;
+
+    allocator->first_allocatable_inode =
+        INITRAFS_ROOT_INODE + 1U;
+
+    /*
+     * Inode 0 is permanently unused.
+     */
+    initrafs_inode_mark_used(
+        allocator,
+        INITRAFS_UNUSED_INODE
+    );
+
+    /*
+     * The root inode already exists and is reserved.
+     */
+    initrafs_inode_mark_used(
+        allocator,
+        INITRAFS_ROOT_INODE
+    );
+
+    allocator->free_inodes =
+        superblock->inode_count -
+        allocator->first_allocatable_inode;
+
+    allocator->superblock =
+        superblock;
+
+    return 1;
+}
+
+unsigned int initrafs_inode_alloc(
+    initrafs_inode_allocator_t *allocator
+)
+{
+    if (allocator == 0 ||
+        allocator->bitmap == 0)
+    {
+        return 0;
+    }
+
+    for (unsigned int inode =
+             allocator->first_allocatable_inode;
+         inode < allocator->total_inodes;
+         inode++)
+    {
+        if (initrafs_inode_is_marked(
+                allocator,
+                inode))
+        {
+            continue;
+        }
+
+        initrafs_inode_mark_used(
+            allocator,
+            inode
+        );
+
+        allocator->free_inodes--;
+
+        return inode;
+    }
+
+    return INITRAFS_UNUSED_INODE;
+}
+
+int initrafs_inode_free(
+    initrafs_inode_allocator_t *allocator,
+    unsigned int inode
+)
+{
+    if (allocator == 0 ||
+        allocator->bitmap == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Inode 0 and the root inode are reserved.
+     */
+    if (inode <
+            allocator->first_allocatable_inode ||
+        inode >=
+            allocator->total_inodes)
+    {
+        return 0;
+    }
+
+    /*
+     * A free inode cannot be freed again.
+     */
+    if (!initrafs_inode_is_marked(
+            allocator,
+            inode))
+    {
+        return 0;
+    }
+
+    initrafs_inode_mark_free(
+        allocator,
+        inode
+    );
+
+    allocator->free_inodes++;
+
+    return 1;
+}

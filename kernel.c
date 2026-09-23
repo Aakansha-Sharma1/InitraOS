@@ -55,6 +55,7 @@ static void syscall_memory_test(void);
 static void initrafs_superblock_test(void);
 static void initrafs_root_test(void);
 static void initrafs_block_allocator_test(void);
+static void initrafs_inode_allocator_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -3890,6 +3891,162 @@ static void initrafs_block_allocator_test(void)
     );
 }
 
+static void initrafs_inode_allocator_test(void)
+{
+    #define INITRAFS_TEST_INODE_BITMAP_BYTES 16U
+
+    initrafs_superblock_t superblock;
+
+    initrafs_inode_allocator_t allocator;
+
+    unsigned char bitmap[
+        INITRAFS_TEST_INODE_BITMAP_BYTES
+    ];
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_allocator_init(
+            &allocator,
+            &superblock,
+            bitmap,
+            sizeof(bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Inode 0 is unused and inode 1 is the root.
+     * The first allocatable inode is therefore 2.
+     */
+    unsigned int first_inode =
+        initrafs_inode_alloc(
+            &allocator
+        );
+
+    if (first_inode != 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    unsigned int second_inode =
+        initrafs_inode_alloc(
+            &allocator
+        );
+
+    if (second_inode != 3U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Free inode 2 and verify it can be reused.
+     */
+    if (!initrafs_inode_free(
+            &allocator,
+            first_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Double-free must fail.
+     */
+    if (initrafs_inode_free(
+            &allocator,
+            first_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    unsigned int reused_inode =
+        initrafs_inode_alloc(
+            &allocator
+        );
+
+    if (reused_inode !=
+        first_inode)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Inode 0, root inode 1, and inode_count
+     * itself are invalid for the allocator.
+     */
+    if (initrafs_inode_free(
+            &allocator,
+            INITRAFS_UNUSED_INODE) ||
+        initrafs_inode_free(
+            &allocator,
+            INITRAFS_ROOT_INODE) ||
+        initrafs_inode_free(
+            &allocator,
+            superblock.inode_count))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_free(
+            &allocator,
+            reused_inode) ||
+        !initrafs_inode_free(
+            &allocator,
+            second_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * 128 total inodes:
+     * inode 0 unused + inode 1 root,
+     * leaving 126 allocatable/free inodes.
+     */
+    if (allocator.free_inodes !=
+        superblock.inode_count - 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_INODE_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -4082,6 +4239,7 @@ void kernel_main(void)
     initrafs_superblock_test();
     initrafs_root_test();
     initrafs_block_allocator_test();
+    initrafs_inode_allocator_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
