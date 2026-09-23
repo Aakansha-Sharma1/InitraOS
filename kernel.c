@@ -57,6 +57,7 @@ static void initrafs_root_test(void);
 static void initrafs_block_allocator_test(void);
 static void initrafs_inode_allocator_test(void);
 static void initrafs_inode_create_test(void);
+static void initrafs_directory_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -4171,6 +4172,309 @@ static void initrafs_inode_create_test(void)
     );
 }
 
+static void initrafs_directory_test(void)
+{
+    #define INITRAFS_TEST_DIRECTORY_ENTRIES 8U
+
+    initrafs_superblock_t superblock;
+
+    initrafs_disk_dirent_t entries[
+        INITRAFS_TEST_DIRECTORY_ENTRIES
+    ];
+
+    inode_number_t inode_number;
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_root_directory_init(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Existing root entries must be searchable.
+     */
+    if (!initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            ".",
+            &inode_number) ||
+        inode_number != INITRAFS_ROOT_INODE)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "..",
+            &inode_number) ||
+        inode_number != INITRAFS_ROOT_INODE)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Add a file and a directory.
+     */
+    if (!initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            2U,
+            INITRAFS_TYPE_FILE,
+            "readme"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            3U,
+            INITRAFS_TYPE_DIRECTORY,
+            "bin"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "readme",
+            &inode_number) ||
+        inode_number != 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "bin",
+            &inode_number) ||
+        inode_number != 3U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Duplicate names must be rejected.
+     */
+    if (initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            4U,
+            INITRAFS_TYPE_FILE,
+            "readme"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Empty names and overly long names are invalid.
+     */
+    if (initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            4U,
+            INITRAFS_TYPE_FILE,
+            ""))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * The "." and ".." entries are reserved.
+     */
+    if (initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            4U,
+            INITRAFS_TYPE_FILE,
+            "."))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_directory_remove(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            ".") ||
+        initrafs_directory_remove(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            ".."))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Remove a normal entry and verify lookup fails.
+     */
+    if (!initrafs_directory_remove(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "readme"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "readme",
+            &inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Removing the same entry again must fail.
+     */
+    if (initrafs_directory_remove(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "readme"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * A freed slot must be reusable.
+     */
+    if (!initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            4U,
+            INITRAFS_TYPE_FILE,
+            "readme2"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_directory_lookup(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            "readme2",
+            &inode_number) ||
+        inode_number != 4U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Fill all remaining free slots.
+     */
+    if (!initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            5U,
+            INITRAFS_TYPE_FILE,
+            "one") ||
+        !initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            6U,
+            INITRAFS_TYPE_FILE,
+            "two") ||
+        !initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            7U,
+            INITRAFS_TYPE_FILE,
+            "three") ||
+        !initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            8U,
+            INITRAFS_TYPE_FILE,
+            "four"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * No free directory entry remains.
+     */
+    if (initrafs_directory_add(
+            entries,
+            INITRAFS_TEST_DIRECTORY_ENTRIES,
+            9U,
+            INITRAFS_TYPE_FILE,
+            "full"))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_DIRECTORY_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_DIRECTORY_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -4365,6 +4669,7 @@ void kernel_main(void)
     initrafs_block_allocator_test();
     initrafs_inode_allocator_test();
     initrafs_inode_create_test();
+    initrafs_directory_test();
 
     /*
      * Start the user task through the privilege-aware task switch.

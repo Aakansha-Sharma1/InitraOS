@@ -101,4 +101,25 @@ int initrafs_inode_create(
     unsigned int mode
 );
 
+int initrafs_directory_lookup(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    const char *name,
+    inode_number_t *inode_number
+);
+
+int initrafs_directory_add(
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    inode_number_t inode_number,
+    unsigned int type,
+    const char *name
+);
+
+int initrafs_directory_remove(
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    const char *name
+);
+
 #endif

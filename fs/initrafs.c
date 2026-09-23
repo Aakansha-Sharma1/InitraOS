@@ -801,3 +801,271 @@ int initrafs_inode_create(
 
     return 1;
 }
+static unsigned int initrafs_name_length(
+    const char *name
+)
+{
+    if (name == 0)
+    {
+        return 0;
+    }
+
+    for (unsigned int length = 0;
+         length <= INITRAFS_MAX_NAME_LENGTH;
+         length++)
+    {
+        if (name[length] == 0)
+        {
+            return length;
+        }
+    }
+
+    return 0;
+}
+
+static int initrafs_name_equals(
+    const initrafs_disk_dirent_t *entry,
+    const char *name,
+    unsigned int name_length
+)
+{
+    if (entry == 0 ||
+        name == 0 ||
+        entry->inode_number ==
+            INITRAFS_UNUSED_INODE ||
+        entry->name_length != name_length)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < name_length;
+         index++)
+    {
+        if (entry->name[index] != name[index])
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int initrafs_directory_name_reserved(
+    const char *name,
+    unsigned int name_length
+)
+{
+    if (name_length == 1U &&
+        name[0] == '.')
+    {
+        return 1;
+    }
+
+    if (name_length == 2U &&
+        name[0] == '.' &&
+        name[1] == '.')
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int initrafs_directory_type_valid(
+    unsigned int type
+)
+{
+    switch (type)
+    {
+        case INITRAFS_TYPE_FILE:
+        case INITRAFS_TYPE_DIRECTORY:
+        case INITRAFS_TYPE_SYMLINK:
+        case INITRAFS_TYPE_DEVICE:
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
+int initrafs_directory_lookup(
+    const initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    const char *name,
+    inode_number_t *inode_number
+)
+{
+    unsigned int name_length;
+
+    if (entries == 0 ||
+        entry_count == 0 ||
+        name == 0 ||
+        inode_number == 0)
+    {
+        return 0;
+    }
+
+    name_length =
+        initrafs_name_length(name);
+
+    if (name_length == 0 ||
+        name_length > INITRAFS_MAX_NAME_LENGTH)
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (!initrafs_name_equals(
+                &entries[index],
+                name,
+                name_length))
+        {
+            continue;
+        }
+
+        *inode_number =
+            entries[index].inode_number;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+int initrafs_directory_add(
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    inode_number_t inode_number,
+    unsigned int type,
+    const char *name
+)
+{
+    unsigned int name_length;
+    unsigned int free_index = entry_count;
+
+    if (entries == 0 ||
+        entry_count == 0 ||
+        inode_number == INITRAFS_UNUSED_INODE ||
+        !initrafs_directory_type_valid(type) ||
+        name == 0)
+    {
+        return 0;
+    }
+
+    name_length =
+        initrafs_name_length(name);
+
+    if (name_length == 0 ||
+        name_length > INITRAFS_MAX_NAME_LENGTH ||
+        initrafs_directory_name_reserved(
+            name,
+            name_length))
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (initrafs_name_equals(
+                &entries[index],
+                name,
+                name_length))
+        {
+            /*
+             * A directory cannot contain
+             * duplicate names.
+             */
+            return 0;
+        }
+
+        if (free_index == entry_count &&
+            entries[index].inode_number ==
+                INITRAFS_UNUSED_INODE)
+        {
+            free_index = index;
+        }
+    }
+
+    if (free_index == entry_count)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        &entries[free_index],
+        sizeof(initrafs_disk_dirent_t)
+    );
+
+    entries[free_index].inode_number =
+        inode_number;
+
+    entries[free_index].type =
+        type;
+
+    entries[free_index].name_length =
+        name_length;
+
+    initrafs_copy_name(
+        entries[free_index].name,
+        name,
+        name_length
+    );
+
+    return 1;
+}
+
+int initrafs_directory_remove(
+    initrafs_disk_dirent_t *entries,
+    unsigned int entry_count,
+    const char *name
+)
+{
+    unsigned int name_length;
+
+    if (entries == 0 ||
+        entry_count == 0 ||
+        name == 0)
+    {
+        return 0;
+    }
+
+    name_length =
+        initrafs_name_length(name);
+
+    if (name_length == 0 ||
+        name_length > INITRAFS_MAX_NAME_LENGTH ||
+        initrafs_directory_name_reserved(
+            name,
+            name_length))
+    {
+        return 0;
+    }
+
+    for (unsigned int index = 0;
+         index < entry_count;
+         index++)
+    {
+        if (!initrafs_name_equals(
+                &entries[index],
+                name,
+                name_length))
+        {
+            continue;
+        }
+
+        initrafs_zero_bytes(
+            &entries[index],
+            sizeof(initrafs_disk_dirent_t)
+        );
+
+        return 1;
+    }
+
+    return 0;
+}
