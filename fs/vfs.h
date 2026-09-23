@@ -12,6 +12,9 @@
 #include "inode.h"
 #include "file.h"
 
+#define VFS_MAX_FILESYSTEMS 8U
+#define VFS_MAX_OPEN_FILES  32U
+
 typedef struct filesystem filesystem_t;
 
 struct filesystem
@@ -71,8 +74,27 @@ struct filesystem
         const char *path
     );
 
+    int (*readdir)(
+        filesystem_t *filesystem,
+        const char *path,
+        void *entry,
+        unsigned int entry_size
+    );
+
     void *private_data;
 };
+
+/*
+ * Filesystem registration.
+ */
+
+int filesystem_register(
+    filesystem_t *filesystem
+);
+
+int filesystem_unregister(
+    filesystem_t *filesystem
+);
 
 /*
  * VFS lifecycle.
@@ -139,5 +161,11 @@ int vfs_readdir(
 int vfs_unlink(
     const char *path
 );
+
+/*
+ * Runtime self-test.
+ */
+
+int vfs_self_test(void);
 
 #endif

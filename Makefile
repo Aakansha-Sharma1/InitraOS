@@ -33,6 +33,12 @@ $(BUILD)/kernel.c.o: kernel.c | $(BUILD)
 		-fno-asynchronous-unwind-tables -fno-unwind-tables \
 		-c kernel.c -o $@
 
+$(BUILD)/fs/vfs.c.o: fs/vfs.c fs/vfs.h fs/file.h fs/inode.h fs/block.h | $(BUILD)
+	mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -fno-unwind-tables \
+		-c fs/vfs.c -o $@
+
 $(BUILD)/fs/initrafs.c.o: \
 	fs/initrafs.c \
 	fs/initrafs.h \
@@ -65,11 +71,13 @@ $(BUILD)/kernel.elf: \
 	$(BUILD)/kernel.asm.o \
 	$(BUILD)/kernel.c.o \
 	$(BUILD)/fs/initrafs.c.o \
+	$(BUILD)/fs/vfs.c.o \
 	linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ \
 		$(BUILD)/kernel.asm.o \
 		$(BUILD)/kernel.c.o \
-		$(BUILD)/fs/initrafs.c.o
+		$(BUILD)/fs/initrafs.c.o \
+		$(BUILD)/fs/vfs.c.o
 
 # Convert the linked ELF kernel into the flat binary loaded by stage2.
 $(BUILD)/kernel.bin: $(BUILD)/kernel.elf

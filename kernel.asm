@@ -41,8 +41,22 @@ extern kernel_main
 extern keyboard_handle
 extern syscall_dispatcher
 extern syscall_exit
+extern __bss_start
+extern __bss_end
 
 kernel_start:
+
+    ; ---------------------------------------------------------
+    ; Clear kernel BSS before using any static C/assembly state.
+    ; The flat kernel image does not contain .bss bytes, so the
+    ; boot code must establish the required zero initialization.
+    ; ---------------------------------------------------------
+
+    mov edi, __bss_start
+    mov ecx, __bss_end
+    sub ecx, edi
+    xor eax, eax
+    rep stosb
 
     ; ---------------------------------------------------------
     ; Install the kernel-owned GDT and TSS first.

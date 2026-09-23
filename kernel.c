@@ -1,6 +1,7 @@
 #include "syscall.h"
 #include "program.h"
 #include "fs/initrafs.h"
+#include "fs/vfs.h"
 
 #define KEYBOARD_BUFFER_SIZE 128
 
@@ -61,6 +62,7 @@ static void initrafs_directory_test(void);
 static void initrafs_inode_block_mapping_test(void);
 static void initrafs_file_io_test(void);
 static void initrafs_directory_path_test(void);
+static void vfs_test(void);
 
 
 static int page_map(
@@ -5644,6 +5646,21 @@ static void initrafs_directory_path_test(void)
     );
 }
 
+static void vfs_test(void)
+{
+    if (!vfs_self_test())
+    {
+        c_serial_print(
+            "[InitraOS] VFS_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] VFS_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -5842,6 +5859,7 @@ void kernel_main(void)
     initrafs_inode_block_mapping_test();
     initrafs_file_io_test();
     initrafs_directory_path_test();
+    vfs_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
