@@ -33,6 +33,18 @@ $(BUILD)/kernel.c.o: kernel.c | $(BUILD)
 		-fno-asynchronous-unwind-tables -fno-unwind-tables \
 		-c kernel.c -o $@
 
+$(BUILD)/fs/initrafs.c.o: \
+	fs/initrafs.c \
+	fs/initrafs.h \
+	fs/fs.h \
+	fs/format.h \
+	fs/block.h \
+	fs/inode.h | $(BUILD)
+	mkdir -p $(@D)
+	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -fno-unwind-tables \
+		-c fs/initrafs.c -o $@
+
 # Compile the first 64-bit C kernel entry as freestanding x86-64 code.
 $(BUILD)/kernel64.c.o: kernel64.c | $(BUILD)
 	$(CC) -m64 -ffreestanding -fno-pie -fno-stack-protector \
@@ -49,9 +61,15 @@ $(BUILD)/kernel.asm.o: kernel.asm idt.inc serial.inc $(BUILD)/kernel64.c.bin | $
 	$(NASM) -f elf32 $(NASMFLAGS) kernel.asm -o $@
 
 # Link the C and assembly objects into an ELF kernel.
-$(BUILD)/kernel.elf: $(BUILD)/kernel.asm.o $(BUILD)/kernel.c.o linker.ld
+$(BUILD)/kernel.elf: \
+	$(BUILD)/kernel.asm.o \
+	$(BUILD)/kernel.c.o \
+	$(BUILD)/fs/initrafs.c.o \
+	linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ \
-		$(BUILD)/kernel.asm.o $(BUILD)/kernel.c.o
+		$(BUILD)/kernel.asm.o \
+		$(BUILD)/kernel.c.o \
+		$(BUILD)/fs/initrafs.c.o
 
 # Convert the linked ELF kernel into the flat binary loaded by stage2.
 $(BUILD)/kernel.bin: $(BUILD)/kernel.elf

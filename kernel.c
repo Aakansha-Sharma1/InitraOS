@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "program.h"
+#include "fs/initrafs.h"
 
 #define KEYBOARD_BUFFER_SIZE 128
 
@@ -51,6 +52,7 @@ static void process_instance_isolation_test(void);
 static void process_task_link_test(void);
 static void syscall_dispatcher_test(void);
 static void syscall_memory_test(void);
+static void initrafs_superblock_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -3589,6 +3591,63 @@ static void shell_execute(void)
     shell_prompt();
 }
 
+static void initrafs_superblock_test(void)
+{
+    initrafs_superblock_t superblock;
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            4096U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_SUPERBLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_superblock_validate(
+            &superblock))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_SUPERBLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Verify that validation rejects
+     * an invalid filesystem signature.
+     */
+    unsigned int original_magic =
+        superblock.magic;
+
+    superblock.magic = 0;
+
+    if (initrafs_superblock_validate(
+            &superblock))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_SUPERBLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    superblock.magic =
+        original_magic;
+
+    if (!initrafs_superblock_validate(
+            &superblock))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_SUPERBLOCK_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_SUPERBLOCK_OK\n"
+    );
+}
 
 /* ---------- Kernel Main ---------- */
 
@@ -3777,8 +3836,9 @@ void kernel_main(void)
     dynamic_page_test();
     page_protection_test();
     page_user_protection_test();
-        heap_paging_test();
+    heap_paging_test();
     heap_dynamic_test();
+    initrafs_superblock_test();
 
     /*
      * Start the user task through the privilege-aware task switch.
