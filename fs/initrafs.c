@@ -1184,3 +1184,564 @@ int initrafs_inode_unmap_block(
 
     return 1;
 }
+
+
+static int initrafs_file_inode_pair_valid(
+    const struct fs_inode *inode,
+    const initrafs_disk_inode_t *disk_inode
+)
+{
+    if (inode == 0 ||
+        disk_inode == 0)
+    {
+        return 0;
+    }
+
+    if (inode->inode_number !=
+            disk_inode->inode_number ||
+        inode->type !=
+            INODE_TYPE_FILE ||
+        disk_inode->type !=
+            INITRAFS_TYPE_FILE ||
+        inode->size !=
+            disk_inode->size)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
+int initrafs_file_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    unsigned int mode
+)
+{
+    unsigned int inode_number;
+
+    if (allocator == 0 ||
+        inode == 0 ||
+        disk_inode == 0)
+    {
+        return 0;
+    }
+
+    inode_number =
+        initrafs_inode_alloc(
+            allocator
+        );
+
+    if (inode_number ==
+        INITRAFS_UNUSED_INODE)
+    {
+        return 0;
+    }
+
+    if (!initrafs_inode_init(
+            inode,
+            inode_number,
+            INODE_TYPE_FILE,
+            mode))
+    {
+        initrafs_inode_free(
+            allocator,
+            inode_number
+        );
+
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        disk_inode,
+        sizeof(initrafs_disk_inode_t)
+    );
+
+    disk_inode->inode_number =
+        inode_number;
+
+    disk_inode->type =
+        INITRAFS_TYPE_FILE;
+
+    disk_inode->mode =
+        mode;
+
+    disk_inode->size = 0;
+
+    disk_inode->owner = 0;
+    disk_inode->group = 0;
+    disk_inode->link_count = 1U;
+
+    return 1;
+}
+
+static void initrafs_file_rollback_blocks(
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_block_allocator_t *allocator,
+    const unsigned int *logical_blocks,
+    const unsigned int *physical_blocks,
+    unsigned int count
+)
+{
+    if (disk_inode == 0 ||
+        allocator == 0 ||
+        logical_blocks == 0 ||
+        physical_blocks == 0)
+    {
+        return;
+    }
+
+    while (count > 0)
+    {
+        count--;
+
+        initrafs_inode_unmap_block(
+            disk_inode,
+            logical_blocks[count]
+        );
+
+        initrafs_block_free(
+            allocator,
+            physical_blocks[count]
+        );
+    }
+}
+
+int initrafs_file_read(
+    const struct fs_inode *inode,
+    const initrafs_disk_inode_t *disk_inode,
+    block_device_t *device,
+    unsigned int offset,
+    void *buffer,
+    unsigned int size
+)
+{
+    unsigned int available;
+    unsigned int bytes_done = 0;
+
+    unsigned char block_buffer[
+        INITRAFS_BLOCK_SIZE
+    ];
+
+    if (!initrafs_file_inode_pair_valid(
+            inode,
+            disk_inode) ||
+        device == 0 ||
+        device->read == 0 ||
+        buffer == 0 ||
+        device->block_size !=
+            INITRAFS_BLOCK_SIZE ||
+        device->block_count == 0)
+    {
+        return -1;
+    }
+
+    if (size == 0 ||
+        offset >= disk_inode->size)
+    {
+        return 0;
+    }
+
+    available =
+        disk_inode->size - offset;
+
+    if (size > available)
+    {
+        size = available;
+    }
+
+    while (bytes_done < size)
+    {
+        unsigned int file_offset =
+            offset + bytes_done;
+
+        unsigned int logical_block =
+            file_offset /
+            INITRAFS_BLOCK_SIZE;
+
+        unsigned int block_offset =
+            file_offset %
+            INITRAFS_BLOCK_SIZE;
+
+        unsigned int remaining =
+            size - bytes_done;
+
+        unsigned int chunk =
+            INITRAFS_BLOCK_SIZE -
+            block_offset;
+
+        unsigned int physical_block;
+
+        if (chunk > remaining)
+        {
+            chunk = remaining;
+        }
+
+        if (!initrafs_inode_get_block(
+                disk_inode,
+                logical_block,
+                &physical_block))
+        {
+            return -1;
+        }
+
+        if (physical_block >=
+            device->block_count)
+        {
+            return -1;
+        }
+
+        if (block_offset == 0 &&
+            chunk == INITRAFS_BLOCK_SIZE)
+        {
+            if (!device->read(
+                    device,
+                    physical_block,
+                    (unsigned char *)buffer +
+                    bytes_done))
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            if (!device->read(
+                    device,
+                    physical_block,
+                    block_buffer))
+            {
+                return -1;
+            }
+
+            for (unsigned int index = 0;
+                 index < chunk;
+                 index++)
+            {
+                ((unsigned char *)buffer)[
+                    bytes_done + index
+                ] =
+                    block_buffer[
+                        block_offset + index
+                    ];
+            }
+        }
+
+        bytes_done += chunk;
+    }
+
+    return (int)bytes_done;
+}
+
+int initrafs_file_write(
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_block_allocator_t *allocator,
+    block_device_t *device,
+    unsigned int offset,
+    const void *buffer,
+    unsigned int size
+)
+{
+    const unsigned int max_file_size =
+        8U * INITRAFS_BLOCK_SIZE;
+
+    unsigned int original_size;
+    unsigned int end_position;
+    unsigned int first_logical;
+    unsigned int last_logical;
+    unsigned int bytes_done = 0;
+
+    unsigned int new_logical_blocks[8U];
+    unsigned int new_physical_blocks[8U];
+    unsigned int new_block_count = 0;
+
+    unsigned char block_buffer[
+        INITRAFS_BLOCK_SIZE
+    ];
+
+    if (!initrafs_file_inode_pair_valid(
+            inode,
+            disk_inode) ||
+        allocator == 0 ||
+        device == 0 ||
+        device->read == 0 ||
+        device->write == 0 ||
+        buffer == 0 ||
+        device->block_size !=
+            INITRAFS_BLOCK_SIZE ||
+        device->block_count == 0)
+    {
+        return -1;
+    }
+
+    if (size == 0)
+    {
+        return 0;
+    }
+
+    if (offset > disk_inode->size)
+    {
+        /*
+         * Sparse writes are intentionally left for
+         * a later filesystem step.
+         */
+        return -1;
+    }
+
+    if (disk_inode->size >
+        max_file_size)
+    {
+        return -1;
+    }
+
+    if (size >
+        max_file_size - offset)
+    {
+        return -1;
+    }
+
+    original_size =
+        disk_inode->size;
+
+    end_position =
+        offset + size;
+
+    first_logical =
+        offset / INITRAFS_BLOCK_SIZE;
+
+    last_logical =
+        (end_position - 1U) /
+        INITRAFS_BLOCK_SIZE;
+
+    /*
+     * Allocate all missing blocks first.
+     * If allocation cannot complete, roll back
+     * every block allocated by this operation.
+     */
+    for (unsigned int logical =
+             first_logical;
+         logical <= last_logical;
+         logical++)
+    {
+        unsigned int physical_block;
+
+        if (initrafs_inode_get_block(
+                disk_inode,
+                logical,
+                &physical_block))
+        {
+            continue;
+        }
+
+        physical_block =
+            initrafs_block_alloc(
+                allocator
+            );
+
+        if (physical_block == 0 ||
+            physical_block >=
+                device->block_count)
+        {
+            initrafs_file_rollback_blocks(
+                disk_inode,
+                allocator,
+                new_logical_blocks,
+                new_physical_blocks,
+                new_block_count
+            );
+
+            return -1;
+        }
+
+        if (!initrafs_inode_map_block(
+                disk_inode,
+                allocator->superblock,
+                logical,
+                physical_block))
+        {
+            initrafs_block_free(
+                allocator,
+                physical_block
+            );
+
+            initrafs_file_rollback_blocks(
+                disk_inode,
+                allocator,
+                new_logical_blocks,
+                new_physical_blocks,
+                new_block_count
+            );
+
+            return -1;
+        }
+
+        new_logical_blocks[
+            new_block_count
+        ] = logical;
+
+        new_physical_blocks[
+            new_block_count
+        ] = physical_block;
+
+        new_block_count++;
+    }
+
+    /*
+     * Write every affected block.
+     */
+    while (bytes_done < size)
+    {
+        unsigned int file_offset =
+            offset + bytes_done;
+
+        unsigned int logical_block =
+            file_offset /
+            INITRAFS_BLOCK_SIZE;
+
+        unsigned int block_offset =
+            file_offset %
+            INITRAFS_BLOCK_SIZE;
+
+        unsigned int remaining =
+            size - bytes_done;
+
+        unsigned int chunk =
+            INITRAFS_BLOCK_SIZE -
+            block_offset;
+
+        unsigned int physical_block;
+        int new_block = 0;
+
+        if (chunk > remaining)
+        {
+            chunk = remaining;
+        }
+
+        if (!initrafs_inode_get_block(
+                disk_inode,
+                logical_block,
+                &physical_block) ||
+            physical_block >=
+                device->block_count)
+        {
+            initrafs_file_rollback_blocks(
+                disk_inode,
+                allocator,
+                new_logical_blocks,
+                new_physical_blocks,
+                new_block_count
+            );
+
+            return -1;
+        }
+
+        for (unsigned int index = 0;
+             index < new_block_count;
+             index++)
+        {
+            if (new_logical_blocks[index] ==
+                logical_block)
+            {
+                new_block = 1;
+                break;
+            }
+        }
+
+        if (block_offset == 0 &&
+            chunk == INITRAFS_BLOCK_SIZE)
+        {
+            if (!device->write(
+                    device,
+                    physical_block,
+                    (const unsigned char *)buffer +
+                    bytes_done))
+            {
+                initrafs_file_rollback_blocks(
+                    disk_inode,
+                    allocator,
+                    new_logical_blocks,
+                    new_physical_blocks,
+                    new_block_count
+                );
+
+                return -1;
+            }
+        }
+        else
+        {
+            if (new_block)
+            {
+                for (unsigned int index = 0;
+                     index < INITRAFS_BLOCK_SIZE;
+                     index++)
+                {
+                    block_buffer[index] = 0;
+                }
+            }
+            else
+            {
+                if (!device->read(
+                        device,
+                        physical_block,
+                        block_buffer))
+                {
+                    initrafs_file_rollback_blocks(
+                        disk_inode,
+                        allocator,
+                        new_logical_blocks,
+                        new_physical_blocks,
+                        new_block_count
+                    );
+
+                    return -1;
+                }
+            }
+
+            for (unsigned int index = 0;
+                 index < chunk;
+                 index++)
+            {
+                block_buffer[
+                    block_offset + index
+                ] =
+                    ((const unsigned char *)buffer)[
+                        bytes_done + index
+                    ];
+            }
+
+            if (!device->write(
+                    device,
+                    physical_block,
+                    block_buffer))
+            {
+                initrafs_file_rollback_blocks(
+                    disk_inode,
+                    allocator,
+                    new_logical_blocks,
+                    new_physical_blocks,
+                    new_block_count
+                );
+
+                return -1;
+            }
+        }
+
+        bytes_done += chunk;
+    }
+
+    /*
+     * Keep the in-memory and persistent inode
+     * representations synchronized.
+     */
+    if (end_position > original_size)
+    {
+        disk_inode->size =
+            end_position;
+
+        inode->size =
+            end_position;
+    }
+
+    return (int)bytes_done;
+}

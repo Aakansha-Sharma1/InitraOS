@@ -59,6 +59,8 @@ static void initrafs_inode_allocator_test(void);
 static void initrafs_inode_create_test(void);
 static void initrafs_directory_test(void);
 static void initrafs_inode_block_mapping_test(void);
+static void initrafs_file_io_test(void);
+
 
 static int page_map(
     unsigned int virtual_address,
@@ -4732,6 +4734,548 @@ static void initrafs_inode_block_mapping_test(void)
     );
 }
 
+
+
+#define INITRAFS_TEST_FILE_DISK_BLOCKS 64U
+
+static unsigned char initrafs_test_file_disk[
+    INITRAFS_TEST_FILE_DISK_BLOCKS *
+    INITRAFS_BLOCK_SIZE
+];
+
+static int initrafs_test_disk_read(
+    block_device_t *device,
+    unsigned int block,
+    void *buffer
+)
+{
+    if (device == 0 ||
+        buffer == 0 ||
+        device->private_data == 0 ||
+        block >= device->block_count)
+    {
+        return 0;
+    }
+
+    unsigned char *storage =
+        (unsigned char *)device->private_data;
+
+    for (unsigned int index = 0;
+         index < INITRAFS_BLOCK_SIZE;
+         index++)
+    {
+        ((unsigned char *)buffer)[index] =
+            storage[
+                block * INITRAFS_BLOCK_SIZE +
+                index
+            ];
+    }
+
+    return 1;
+}
+
+static int initrafs_test_disk_write(
+    block_device_t *device,
+    unsigned int block,
+    const void *buffer
+)
+{
+    if (device == 0 ||
+        buffer == 0 ||
+        device->private_data == 0 ||
+        block >= device->block_count)
+    {
+        return 0;
+    }
+
+    unsigned char *storage =
+        (unsigned char *)device->private_data;
+
+    for (unsigned int index = 0;
+         index < INITRAFS_BLOCK_SIZE;
+         index++)
+    {
+        storage[
+            block * INITRAFS_BLOCK_SIZE +
+            index
+        ] =
+            ((const unsigned char *)buffer)[index];
+    }
+
+    return 1;
+}
+
+static void initrafs_file_io_test(void)
+{
+    initrafs_superblock_t superblock;
+    initrafs_block_allocator_t block_allocator;
+    initrafs_inode_allocator_t inode_allocator;
+
+    unsigned char block_bitmap[
+        (INITRAFS_TEST_FILE_DISK_BLOCKS + 7U) / 8U
+    ];
+
+    unsigned char inode_bitmap[16U];
+
+    struct fs_inode file_inode;
+    initrafs_disk_inode_t disk_inode;
+
+    block_device_t device;
+
+    unsigned char write_buffer[700U];
+    unsigned char read_buffer[704U];
+
+    unsigned char patch[5U] =
+    {
+        0xAA,
+        0xBB,
+        0xCC,
+        0xDD,
+        0xEE
+    };
+
+    unsigned char append_data[3U] =
+    {
+        0x11,
+        0x22,
+        0x33
+    };
+
+    unsigned int initial_free_blocks;
+    unsigned int initial_free_inodes;
+    unsigned int physical_block;
+
+    /*
+     * Initialize deterministic test storage.
+     */
+    for (unsigned int index = 0;
+         index <
+         sizeof(initrafs_test_file_disk);
+         index++)
+    {
+        initrafs_test_file_disk[index] = 0;
+    }
+
+    if (!initrafs_superblock_init(
+            &superblock,
+            INITRAFS_TEST_FILE_DISK_BLOCKS))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_block_allocator_init(
+            &block_allocator,
+            &superblock,
+            block_bitmap,
+            sizeof(block_bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_allocator_init(
+            &inode_allocator,
+            &superblock,
+            inode_bitmap,
+            sizeof(inode_bitmap)))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    initial_free_blocks =
+        block_allocator.free_blocks;
+
+    initial_free_inodes =
+        inode_allocator.free_inodes;
+
+    /*
+     * Create a new file.
+     */
+    if (!initrafs_file_create(
+            &inode_allocator,
+            &file_inode,
+            &disk_inode,
+            0644U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (file_inode.inode_number != 2U ||
+        disk_inode.inode_number != 2U ||
+        file_inode.type != INODE_TYPE_FILE ||
+        disk_inode.type != INITRAFS_TYPE_FILE ||
+        file_inode.mode != 0644U ||
+        disk_inode.mode != 0644U ||
+        file_inode.size != 0U ||
+        disk_inode.size != 0U ||
+        file_inode.link_count != 1U ||
+        disk_inode.link_count != 1U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Prepare 700 bytes of deterministic file data.
+     */
+    for (unsigned int index = 0;
+         index < sizeof(write_buffer);
+         index++)
+    {
+        write_buffer[index] =
+            (unsigned char)(
+                (index * 7U + 3U) &
+                0xFFU
+            );
+    }
+
+    /*
+     * 700 bytes must require two data blocks.
+     */
+    if (initrafs_file_write(
+            &file_inode,
+            &disk_inode,
+            &block_allocator,
+            &device,
+            0U,
+            write_buffer,
+            sizeof(write_buffer)) !=
+        (int)sizeof(write_buffer))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (file_inode.size != 700U ||
+        disk_inode.size != 700U ||
+        block_allocator.free_blocks !=
+            initial_free_blocks - 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_get_block(
+            &disk_inode,
+            0U,
+            &physical_block) ||
+        physical_block !=
+            superblock.data_start + 1U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_get_block(
+            &disk_inode,
+            1U,
+            &physical_block) ||
+        physical_block !=
+            superblock.data_start + 2U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Read back the entire file.
+     */
+    if (initrafs_file_read(
+            &file_inode,
+            &disk_inode,
+            &device,
+            0U,
+            read_buffer,
+            700U) != 700)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    for (unsigned int index = 0;
+         index < 700U;
+         index++)
+    {
+        if (read_buffer[index] !=
+            write_buffer[index])
+        {
+            c_serial_print(
+                "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+            );
+            return;
+        }
+    }
+
+    /*
+     * Partial overwrite inside the first block.
+     */
+    if (initrafs_file_write(
+            &file_inode,
+            &disk_inode,
+            &block_allocator,
+            &device,
+            100U,
+            patch,
+            sizeof(patch)) !=
+        (int)sizeof(patch))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    for (unsigned int index = 0;
+         index < sizeof(patch);
+         index++)
+    {
+        write_buffer[
+            100U + index
+        ] = patch[index];
+    }
+
+    if (file_inode.size != 700U ||
+        disk_inode.size != 700U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_file_read(
+            &file_inode,
+            &disk_inode,
+            &device,
+            0U,
+            read_buffer,
+            700U) != 700)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    for (unsigned int index = 0;
+         index < 700U;
+         index++)
+    {
+        if (read_buffer[index] !=
+            write_buffer[index])
+        {
+            c_serial_print(
+                "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+            );
+            return;
+        }
+    }
+
+    /*
+     * Append three bytes to the file.
+     */
+    if (initrafs_file_write(
+            &file_inode,
+            &disk_inode,
+            &block_allocator,
+            &device,
+            700U,
+            append_data,
+            sizeof(append_data)) !=
+        (int)sizeof(append_data))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (file_inode.size != 703U ||
+        disk_inode.size != 703U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_file_read(
+            &file_inode,
+            &disk_inode,
+            &device,
+            700U,
+            read_buffer,
+            sizeof(append_data)) !=
+        (int)sizeof(append_data))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    for (unsigned int index = 0;
+         index < sizeof(append_data);
+         index++)
+    {
+        if (read_buffer[index] !=
+            append_data[index])
+        {
+            c_serial_print(
+                "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+            );
+            return;
+        }
+    }
+
+    /*
+     * Reading at EOF returns zero.
+     */
+    if (initrafs_file_read(
+            &file_inode,
+            &disk_inode,
+            &device,
+            703U,
+            read_buffer,
+            1U) != 0)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Writes beyond the current EOF are not yet
+     * treated as sparse writes.
+     */
+    if (initrafs_file_write(
+            &file_inode,
+            &disk_inode,
+            &block_allocator,
+            &device,
+            704U,
+            append_data,
+            1U) != -1)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * The eight-direct-block file-size limit must
+     * reject an operation that exceeds 4096 bytes.
+     */
+    if (initrafs_file_write(
+            &file_inode,
+            &disk_inode,
+            &block_allocator,
+            &device,
+            0U,
+            append_data,
+            (8U * INITRAFS_BLOCK_SIZE) + 1U) != -1)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Release the allocated file blocks.
+     */
+    for (unsigned int logical = 0;
+         logical < 8U;
+         logical++)
+    {
+        if (initrafs_inode_get_block(
+                &disk_inode,
+                logical,
+                &physical_block))
+        {
+            if (!initrafs_inode_unmap_block(
+                    &disk_inode,
+                    logical) ||
+                !initrafs_block_free(
+                    &block_allocator,
+                    physical_block))
+            {
+                c_serial_print(
+                    "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+                );
+                return;
+            }
+        }
+    }
+
+    if (!initrafs_inode_free(
+            &inode_allocator,
+            file_inode.inode_number))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    if (block_allocator.free_blocks !=
+            initial_free_blocks ||
+        inode_allocator.free_inodes !=
+            initial_free_inodes ||
+        disk_inode.direct_blocks[0] != 0U ||
+        disk_inode.direct_blocks[1] != 0U)
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_FILE_IO_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_FILE_IO_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -4927,7 +5471,7 @@ void kernel_main(void)
     initrafs_inode_allocator_test();
     initrafs_inode_create_test();
     initrafs_directory_test();
-    initrafs_inode_block_mapping_test();
+    initrafs_inode_block_mapping_test();    initrafs_file_io_test();
 
     /*
      * Start the user task through the privilege-aware task switch.

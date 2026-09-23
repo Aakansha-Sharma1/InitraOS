@@ -141,3 +141,28 @@ int initrafs_inode_unmap_block(
 );
 
 #endif
+int initrafs_file_create(
+    initrafs_inode_allocator_t *allocator,
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    unsigned int mode
+);
+
+int initrafs_file_read(
+    const struct fs_inode *inode,
+    const initrafs_disk_inode_t *disk_inode,
+    block_device_t *device,
+    unsigned int offset,
+    void *buffer,
+    unsigned int size
+);
+
+int initrafs_file_write(
+    struct fs_inode *inode,
+    initrafs_disk_inode_t *disk_inode,
+    initrafs_block_allocator_t *allocator,
+    block_device_t *device,
+    unsigned int offset,
+    const void *buffer,
+    unsigned int size
+);

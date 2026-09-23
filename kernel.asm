@@ -1081,43 +1081,186 @@ print_hex:
 
 enable_long_mode:
 
-    ; Do not allow hardware interrupts during the transition.
+    ; -----------------------------------------------------
+    ; Interrupts must remain disabled during the transition.
+    ; -----------------------------------------------------
     cli
 
+
+    ; -----------------------------------------------------
     ; 1. Disable current 32-bit paging.
+    ; -----------------------------------------------------
+
     mov eax, cr0
     and eax, ~(1 << 31)
     mov cr0, eax
 
-    ; 2. Enable PAE.
+
+    ; -----------------------------------------------------
+    ; 2. Rebuild the 64-bit identity-mapping structures.
+    ;
+    ; The original tables were prepared by Stage 2 at:
+    ;
+    ;   PML4 = 0x20000
+    ;   PDPT = 0x21000
+    ;   PD   = 0x22000
+    ;   PT   = 0x23000
+    ;
+    ; The 32-bit kernel heap can use this region before
+    ; long-mode entry, so rebuild everything here now.
+    ;
+    ; Mapping:
+    ;   0x00000000 - 0x00FFFFFF
+    ;
+    ; 16 MiB identity mapping using 8 page tables.
+    ; -----------------------------------------------------
+
+    ; Clear PML4.
+    mov edi, 0x00020000
+    xor eax, eax
+    mov ecx, 1024
+    rep stosd
+
+    ; Clear PDPT.
+    mov edi, 0x00021000
+    xor eax, eax
+    mov ecx, 1024
+    rep stosd
+
+    ; Clear page directory.
+    mov edi, 0x00022000
+    xor eax, eax
+    mov ecx, 1024
+    rep stosd
+
+    ; Clear 8 page tables.
+    mov edi, 0x00023000
+    xor eax, eax
+    mov ecx, 8192
+    rep stosd
+
+
+    ; -----------------------------------------------------
+    ; PML4[0] -> PDPT
+    ; -----------------------------------------------------
+
+    mov dword [0x00020000], 0x00021003
+    mov dword [0x00020004], 0
+
+
+    ; -----------------------------------------------------
+    ; PDPT[0] -> Page Directory
+    ; -----------------------------------------------------
+
+    mov dword [0x00021000], 0x00022003
+    mov dword [0x00021004], 0
+
+
+    ; -----------------------------------------------------
+    ; Page Directory:
+    ;
+    ; 8 entries
+    ; Each entry points to one 4 KiB page table.
+    ; Each page table maps 2 MiB.
+    ; -----------------------------------------------------
+
+    mov edi, 0x00022000
+    mov eax, 0x00023000
+    mov ecx, 8
+
+.rebuild_page_directories:
+
+    mov edx, eax
+    or edx, 0x003
+
+    mov dword [edi], edx
+    mov dword [edi + 4], 0
+
+    add eax, 0x1000
+    add edi, 8
+
+    loop .rebuild_page_directories
+
+
+    ; -----------------------------------------------------
+    ; Fill 4096 page-table entries.
+    ;
+    ; 4096 × 4 KiB = 16 MiB identity mapping.
+    ; -----------------------------------------------------
+
+    mov edi, 0x00023000
+    xor eax, eax
+    mov ecx, 4096
+
+.rebuild_page_tables:
+
+    mov edx, eax
+    or edx, 0x003
+
+    mov dword [edi], edx
+    mov dword [edi + 4], 0
+
+    add eax, 0x1000
+    add edi, 8
+
+    loop .rebuild_page_tables
+
+
+    ; -----------------------------------------------------
+    ; 3. Enable PAE.
+    ; -----------------------------------------------------
+
     mov eax, cr4
     or eax, (1 << 5)
     mov cr4, eax
 
-    ; 3. Load the physical address of the 64-bit PML4.
-    ;    PML4 is built by paging64.inc at 0x00020000.
+
+    ; -----------------------------------------------------
+    ; 4. Load freshly rebuilt PML4.
+    ; -----------------------------------------------------
+
     mov eax, 0x00020000
     mov cr3, eax
 
-    ; 4. Enable IA32_EFER.LME.
+
+    ; -----------------------------------------------------
+    ; 5. Enable IA32_EFER.LME.
+    ; -----------------------------------------------------
+
     mov ecx, 0xC0000080
     rdmsr
+
     or eax, (1 << 8)
+
     wrmsr
 
-    ; Confirm prerequisites before enabling paging.
+
+    ; -----------------------------------------------------
+    ; Diagnostic marker before CR0.PG.
+    ; -----------------------------------------------------
+
     mov esi, s_before_pg
     call serial_print
     call serial_newline
 
-    ; 5. Re-enable paging.
-    ;    EFER.LME=1 + CR4.PAE=1 + CR0.PG=1
-    ;    puts the CPU into IA-32e mode.
+
+    ; -----------------------------------------------------
+    ; 6. Re-enable paging.
+    ;
+    ; EFER.LME=1 + CR4.PAE=1 + CR0.PG=1
+    ; prepares IA-32e mode.
+    ; -----------------------------------------------------
+
     mov eax, cr0
     or eax, (1 << 31)
     mov cr0, eax
 
-    ; #89: Initialize 64-bit IDT vector 0.
+
+    ; -----------------------------------------------------
+    ; 7. Build the 64-bit IDT.
+    ; -----------------------------------------------------
+
+    ; Vector 0.
     mov eax, isr64_0
 
     mov word [idt64_start + 0], ax
@@ -1132,7 +1275,8 @@ enable_long_mode:
     mov dword [idt64_start + 8], eax
     mov dword [idt64_start + 12], eax
 
-    ; #90: Initialize 64-bit page-fault handler (vector 14).
+
+    ; Vector 14: page fault.
     mov eax, isr64_page_fault
 
     mov word [idt64_start + 0xE0], ax
@@ -1147,7 +1291,8 @@ enable_long_mode:
     mov dword [idt64_start + 0xE8], eax
     mov dword [idt64_start + 0xEC], eax
 
-    ; #91: Initialize 64-bit PIT timer handler (IRQ0, vector 32).
+
+    ; Vector 32: timer IRQ0.
     mov eax, isr64_timer
 
     mov word [idt64_start + 0x200], ax
@@ -1162,20 +1307,20 @@ enable_long_mode:
     mov dword [idt64_start + 0x208], eax
     mov dword [idt64_start + 0x20C], eax
 
-    ; #80 success marker.
 
-    ; This runs while the current compatibility-mode code segment
-    ; is still active.
+    ; -----------------------------------------------------
+    ; 8. Confirm long-mode prerequisites are active.
+    ; -----------------------------------------------------
+
     mov esi, s_long_mode_ok
     call serial_print
     call serial_newline
 
-    ; #82:
-    ; Load the 64-bit kernel code segment and enter the 64-bit
-    ; kernel entry point.
-    ;
-    ; 0x30 = KERNEL64_CODE_SELECTOR
-    ; kernel64_entry = 64-bit entry point
+
+    ; -----------------------------------------------------
+    ; 9. Far jump into the 64-bit code segment.
+    ; -----------------------------------------------------
+
     jmp KERNEL64_CODE_SELECTOR:kernel64_entry
 
 ; =========================================================
