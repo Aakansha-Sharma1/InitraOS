@@ -316,6 +316,14 @@ int initrafs_instance_unmount(
 );
 
 
+/* ---------- InitraFS VFS adapter ---------- */
+
+int initrafs_vfs_init(
+    filesystem_t *filesystem,
+    initrafs_instance_t *instance
+);
+
+
 /* ---------- Path handling ---------- */
 
 int initrafs_path_lookup(

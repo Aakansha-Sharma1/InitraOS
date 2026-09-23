@@ -45,7 +45,8 @@ $(BUILD)/fs/initrafs.c.o: \
 	fs/fs.h \
 	fs/format.h \
 	fs/block.h \
-	fs/inode.h | $(BUILD)
+	fs/inode.h \
+	fs/vfs.h | $(BUILD)
 	mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
 		-fno-asynchronous-unwind-tables -fno-unwind-tables \

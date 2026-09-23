@@ -1,4 +1,5 @@
 #include "initrafs.h"
+#include "vfs.h"
 
 static void initrafs_zero_bytes(
     void *address,
@@ -2239,6 +2240,274 @@ int initrafs_instance_unmount(
         instance,
         sizeof(initrafs_instance_t)
     );
+
+    return 1;
+}
+
+/* ---------- InitraFS VFS adapter ---------- */
+
+static initrafs_instance_t *
+initrafs_vfs_instance(
+    filesystem_t *filesystem
+)
+{
+    if (filesystem == 0 ||
+        filesystem->private_data == 0)
+    {
+        return 0;
+    }
+
+    return (initrafs_instance_t *)
+        filesystem->private_data;
+}
+
+
+static int initrafs_vfs_mount(
+    filesystem_t *filesystem,
+    block_device_t *device
+)
+{
+    initrafs_instance_t *instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        device == 0)
+    {
+        return 0;
+    }
+
+    if (instance->mounted != 0)
+    {
+        return 0;
+    }
+
+    return initrafs_instance_init(
+        instance,
+        device
+    );
+}
+
+
+static int initrafs_vfs_unmount(
+    filesystem_t *filesystem
+)
+{
+    initrafs_instance_t *instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0)
+    {
+        return 0;
+    }
+
+    return initrafs_instance_unmount(
+        instance
+    );
+}
+
+
+static int initrafs_vfs_lookup(
+    filesystem_t *filesystem,
+    const char *path,
+    struct fs_inode **inode
+)
+{
+    initrafs_instance_t *instance;
+    inode_number_t inode_number;
+    initrafs_namespace_node_t *node;
+
+    instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        instance->mounted == 0 ||
+        path == 0 ||
+        inode == 0)
+    {
+        return 0;
+    }
+
+    if (!initrafs_path_lookup(
+            &instance->namespace,
+            path,
+            &inode_number))
+    {
+        return 0;
+    }
+
+    node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            inode_number
+        );
+
+    if (node == 0 ||
+        node->inode == 0)
+    {
+        return 0;
+    }
+
+    *inode =
+        node->inode;
+
+    return 1;
+}
+
+
+static int initrafs_vfs_read(
+    filesystem_t *filesystem,
+    struct fs_inode *inode,
+    unsigned int offset,
+    void *buffer,
+    unsigned int size
+)
+{
+    initrafs_instance_t *instance;
+    initrafs_namespace_node_t *node;
+
+    instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        instance->mounted == 0 ||
+        inode == 0 ||
+        buffer == 0)
+    {
+        return -1;
+    }
+
+    node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            inode->inode_number
+        );
+
+    if (node == 0 ||
+        node->inode != inode ||
+        node->disk_inode == 0)
+    {
+        return -1;
+    }
+
+    return initrafs_file_read(
+        node->inode,
+        node->disk_inode,
+        instance->device,
+        offset,
+        buffer,
+        size
+    );
+}
+
+
+static int initrafs_vfs_write(
+    filesystem_t *filesystem,
+    struct fs_inode *inode,
+    unsigned int offset,
+    const void *buffer,
+    unsigned int size
+)
+{
+    initrafs_instance_t *instance;
+    initrafs_namespace_node_t *node;
+
+    instance =
+        initrafs_vfs_instance(
+            filesystem
+        );
+
+    if (instance == 0 ||
+        instance->mounted == 0 ||
+        inode == 0 ||
+        buffer == 0)
+    {
+        return -1;
+    }
+
+    node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            inode->inode_number
+        );
+
+    if (node == 0 ||
+        node->inode != inode ||
+        node->disk_inode == 0)
+    {
+        return -1;
+    }
+
+    return initrafs_file_write(
+        node->inode,
+        node->disk_inode,
+        &instance->block_allocator,
+        instance->device,
+        offset,
+        buffer,
+        size
+    );
+}
+
+
+int initrafs_vfs_init(
+    filesystem_t *filesystem,
+    initrafs_instance_t *instance
+)
+{
+    if (filesystem == 0 ||
+        instance == 0)
+    {
+        return 0;
+    }
+
+    initrafs_zero_bytes(
+        filesystem,
+        sizeof(filesystem_t)
+    );
+
+    filesystem->name =
+        "initrafs";
+
+    filesystem->mount =
+        initrafs_vfs_mount;
+
+    filesystem->unmount =
+        initrafs_vfs_unmount;
+
+    filesystem->lookup =
+        initrafs_vfs_lookup;
+
+    filesystem->create =
+        0;
+
+    filesystem->remove =
+        0;
+
+    filesystem->read =
+        initrafs_vfs_read;
+
+    filesystem->write =
+        initrafs_vfs_write;
+
+    filesystem->mkdir =
+        0;
+
+    filesystem->rmdir =
+        0;
+
+    filesystem->readdir =
+        0;
+
+    filesystem->private_data =
+        instance;
 
     return 1;
 }

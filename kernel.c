@@ -63,6 +63,7 @@ static void initrafs_inode_block_mapping_test(void);
 static void initrafs_file_io_test(void);
 static void initrafs_directory_path_test(void);
 static void initrafs_instance_test(void);
+static void initrafs_vfs_test(void);
 static void vfs_test(void);
 
 
@@ -5742,6 +5743,213 @@ static void initrafs_instance_test(void)
     );
 }
 
+static void initrafs_vfs_test(void)
+{
+    initrafs_instance_t instance;
+    filesystem_t filesystem;
+    block_device_t device;
+
+    struct fs_inode file_inode;
+    initrafs_disk_inode_t disk_inode;
+
+    vfs_file_t *file = 0;
+
+    const unsigned char write_data[5] =
+    {
+        'h',
+        'e',
+        'l',
+        'l',
+        'o'
+    };
+
+    unsigned char read_data[5];
+
+    unsigned int registered = 0;
+    unsigned int mounted = 0;
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_vfs_init(
+            &filesystem,
+            &instance))
+    {
+        goto fail;
+    }
+
+    if (!filesystem_register(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    registered = 1;
+
+    if (!vfs_mount(
+            &filesystem,
+            &device))
+    {
+        goto fail;
+    }
+
+    mounted = 1;
+
+    /*
+     * Create one real InitraFS file inside
+     * the mounted namespace.
+     */
+    if (!initrafs_file_create(
+            &instance.inode_allocator,
+            &file_inode,
+            &disk_inode,
+            0644U))
+    {
+        goto fail;
+    }
+
+    if (!initrafs_directory_add(
+            instance.root_entries,
+            INITRAFS_INSTANCE_DIRECTORY_ENTRIES,
+            file_inode.inode_number,
+            INITRAFS_TYPE_FILE,
+            "hello"))
+    {
+        goto fail;
+    }
+
+    if (!initrafs_namespace_register(
+            &instance.namespace,
+            &file_inode,
+            &disk_inode,
+            0,
+            0))
+    {
+        goto fail;
+    }
+
+    /*
+     * Open the real InitraFS file through the
+     * generic VFS layer.
+     */
+    if (!vfs_open(
+            "/hello",
+            0,
+            &file) ||
+        file == 0)
+    {
+        goto fail;
+    }
+
+    if (vfs_write(
+            file,
+            write_data,
+            sizeof(write_data)) !=
+        (int)sizeof(write_data))
+    {
+        goto fail;
+    }
+
+    if (file->position !=
+        sizeof(write_data) ||
+        file->inode->size !=
+        sizeof(write_data))
+    {
+        goto fail;
+    }
+
+    if (!vfs_seek(
+            file,
+            0U))
+    {
+        goto fail;
+    }
+
+    if (vfs_read(
+            file,
+            read_data,
+            sizeof(read_data)) !=
+        (int)sizeof(read_data))
+    {
+        goto fail;
+    }
+
+    for (unsigned int index = 0;
+         index < sizeof(read_data);
+         index++)
+    {
+        if (read_data[index] !=
+            write_data[index])
+        {
+            goto fail;
+        }
+    }
+
+    if (!vfs_close(file))
+    {
+        file = 0;
+        goto fail;
+    }
+
+    file = 0;
+
+    if (!vfs_unmount(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    mounted = 0;
+
+    if (!filesystem_unregister(
+            &filesystem))
+    {
+        registered = 0;
+        goto fail;
+    }
+
+    registered = 0;
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_VFS_OK\n"
+    );
+
+    return;
+
+fail:
+
+    if (file != 0)
+    {
+        vfs_close(file);
+    }
+
+    if (mounted)
+    {
+        vfs_unmount(&filesystem);
+    }
+
+    if (registered)
+    {
+        filesystem_unregister(&filesystem);
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_VFS_FAIL\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -5941,6 +6149,7 @@ void kernel_main(void)
     initrafs_file_io_test();
     initrafs_directory_path_test();
     initrafs_instance_test();
+    initrafs_vfs_test();
     vfs_test();
 
     /*
