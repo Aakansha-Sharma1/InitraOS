@@ -71,6 +71,7 @@ EXPECTED = [
     "[InitraOS] SYSCALL_DISPATCH_OK",
     "[InitraOS] SYSCALL_MEMORY_OK",
     "[InitraOS] SECURITY_CORE_OK",
+    "[InitraOS] SECURITY_AUDIT_API_OK",
     "[InitraOS] USER_REGION_OK",
     "[InitraOS] USER_STACK_OK",
     "[InitraOS] FRAME_PAGING_OK",

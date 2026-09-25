@@ -68,6 +68,7 @@ static void initrafs_vfs_test(void);
 static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
 static void security_core_test(void);
+static void security_audit_syscall_test(void);
 
 
 static int page_map(
@@ -6319,6 +6320,90 @@ static void security_core_test(void)
     );
 }
 
+static void security_audit_syscall_test(void)
+{
+    security_audit_event_t *event =
+        (security_audit_event_t *)USER_STACK_BASE;
+
+    unsigned int count;
+
+    /*
+     * security_core_test() creates exactly two events:
+     *
+     *   event 0 = user denied
+     *   event 1 = kernel allowed
+     */
+    count =
+        syscall_dispatcher(
+            SYSCALL_SECURITY_AUDIT_COUNT,
+            0, 0, 0, 0, 0
+        );
+
+    if (count != 2U)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_API_FAIL_COUNT\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Read the first real audit event into a validated
+     * user-writable buffer.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_AUDIT_READ,
+            0U,
+            USER_STACK_BASE,
+            0, 0, 0
+        ) != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_API_FAIL_READ\n"
+        );
+
+        return;
+    }
+
+    if (event->pid != 100U ||
+        event->privilege !=
+            SECURITY_PRIVILEGE_USER ||
+        event->operation !=
+            SECURITY_OPERATION_PROTECTED_TEST ||
+        event->result !=
+            SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_API_FAIL_EVENT\n"
+        );
+
+        return;
+    }
+
+    /*
+     * A kernel address must never be accepted as a
+     * user-space destination.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_AUDIT_READ,
+            0U,
+            KERNEL_TEST_ADDRESS,
+            0, 0, 0
+        ) != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_API_FAIL_POINTER\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_AUDIT_API_OK\n"
+    );
+}
+
 static void security_syscall_test(
     task_t *user_task
 )
@@ -6557,6 +6642,7 @@ void kernel_main(void)
     syscall_dispatcher_test();
     syscall_memory_test();
     security_core_test();
+    security_audit_syscall_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
@@ -6795,6 +6881,77 @@ void keyboard_handle(
         keyboard_column++;
     }
 }
+
+static int security_user_buffer_valid(
+    unsigned int address,
+    unsigned int size
+)
+{
+    unsigned int directory_index;
+    unsigned int table_index;
+    unsigned int entry;
+
+    /*
+     * The current user-space design provides one writable
+     * user stack page. Keep the first audit API deliberately
+     * limited to that validated user buffer.
+     */
+    if (size == 0 ||
+        size > USER_STACK_SIZE)
+    {
+        return 0;
+    }
+
+    /*
+     * Prevent address + size overflow and ensure the complete
+     * buffer remains inside the user stack region.
+     */
+    if (address < USER_STACK_BASE ||
+        address > USER_STACK_TOP - size)
+    {
+        return 0;
+    }
+
+    directory_index =
+        (address >> 22) & 0x3FF;
+
+    table_index =
+        (address >> 12) & 0x3FF;
+
+    if (directory_index >=
+            kernel_address_space.page_table_count)
+    {
+        return 0;
+    }
+
+    entry =
+        kernel_address_space.page_tables[
+            directory_index
+        ][
+            table_index
+        ];
+
+    /*
+     * The destination must be:
+     *
+     *   present
+     *   writable
+     *   user-accessible
+     */
+    if ((entry &
+         (PAGE_PRESENT |
+          PAGE_WRITABLE |
+          PAGE_USER)) !=
+        (PAGE_PRESENT |
+         PAGE_WRITABLE |
+         PAGE_USER))
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
 unsigned int syscall_dispatcher(
     unsigned int syscall_number,
     unsigned int arg1,
@@ -6859,10 +7016,6 @@ case SYSCALL_GETPID:
             /*
              * Test a kernel-only protected operation through
              * the real user-to-kernel syscall path.
-             *
-             * The current Ring 3 user task must be denied.
-             * The authorization decision is also recorded
-             * in the security audit log.
              */
             if (current_task == 0)
             {
@@ -6875,6 +7028,40 @@ case SYSCALL_GETPID:
                 SECURITY_OPERATION_PROTECTED_TEST,
                 SECURITY_PRIVILEGE_KERNEL
             );
+
+        case SYSCALL_SECURITY_AUDIT_COUNT:
+            /*
+             * Return the number of currently stored audit events.
+             */
+            return security_audit_count();
+
+        case SYSCALL_SECURITY_AUDIT_READ:
+        {
+            security_audit_event_t *destination =
+                (security_audit_event_t *)arg2;
+
+            /*
+             * EBX / arg1 = audit event index
+             * ECX / arg2 = user-space destination
+             */
+            if (!security_user_buffer_valid(
+                    arg2,
+                    sizeof(security_audit_event_t)
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            if (!security_audit_get(
+                    arg1,
+                    destination
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            return SECURITY_ALLOWED;
+        }
 
         default:
             /*
