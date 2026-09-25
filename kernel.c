@@ -6319,6 +6319,62 @@ static void security_core_test(void)
     );
 }
 
+static void security_syscall_test(
+    task_t *user_task
+)
+{
+    security_audit_event_t event;
+
+    if (user_task == 0)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_SYSCALL_FAIL_TASK\n"
+        );
+
+        return;
+    }
+
+    if (security_audit_count() != 3U)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_SYSCALL_FAIL_COUNT\n"
+        );
+
+        return;
+    }
+
+    if (!security_audit_get(
+            2U,
+            &event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_SYSCALL_FAIL_READ\n"
+        );
+
+        return;
+    }
+
+    if (event.pid != user_task->id ||
+        event.privilege !=
+            SECURITY_PRIVILEGE_USER ||
+        event.operation !=
+            SECURITY_OPERATION_PROTECTED_TEST ||
+        event.result !=
+            SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_SYSCALL_FAIL_EVENT\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_SYSCALL_DENIED_OK\n"
+    );
+}
+
 /* ---------- Kernel Main ---------- */
 
 void kernel_main(void)
@@ -6576,6 +6632,10 @@ void kernel_main(void)
                 c_serial_print(
                     "[InitraOS] USER_PROGRAM_EXECUTION_OK\n"
                 );
+
+                security_syscall_test(
+                    user_test
+                );
             }
             else
             {
@@ -6794,6 +6854,27 @@ case SYSCALL_GETPID:
             );
 
             return 0;
+
+        case SYSCALL_SECURITY_CHECK:
+            /*
+             * Test a kernel-only protected operation through
+             * the real user-to-kernel syscall path.
+             *
+             * The current Ring 3 user task must be denied.
+             * The authorization decision is also recorded
+             * in the security audit log.
+             */
+            if (current_task == 0)
+            {
+                return (unsigned int)-1;
+            }
+
+            return security_authorize(
+                current_task->id,
+                current_task->privilege,
+                SECURITY_OPERATION_PROTECTED_TEST,
+                SECURITY_PRIVILEGE_KERNEL
+            );
 
         default:
             /*

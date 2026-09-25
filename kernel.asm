@@ -550,6 +550,17 @@ user_mode_entry:
     cmp eax, ebx
     jne .syscall_test_fail
 
+    ; Test the security-protected syscall.
+    ;
+    ; This code is executing in Ring 3, so the kernel-only
+    ; operation must be denied.
+    mov eax, 6
+    int 0x80
+
+    ; SECURITY_DENIED = 0.
+    cmp eax, 0
+    jne .syscall_test_fail
+
 .test_exit:
 
     ; Test SYSCALL_EXIT.

@@ -26,5 +26,6 @@
 #define SYSCALL_YIELD  3
 #define SYSCALL_ALLOC  4
 #define SYSCALL_FREE   5
+#define SYSCALL_SECURITY_CHECK   6
 
 #endif
