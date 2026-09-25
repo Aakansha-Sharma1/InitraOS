@@ -6458,6 +6458,27 @@ static void security_syscall_test(
     c_serial_print(
         "[InitraOS] SECURITY_SYSCALL_DENIED_OK\n"
     );
+
+    /*
+     * Verify that the real Ring 3 security utility
+     * successfully read all audit events.
+     *
+     * The user program writes this completion value only
+     * after all three audit records were read successfully.
+     */
+    if (*(volatile unsigned int *)(USER_STACK_BASE + 0x180U) !=
+        0x53454341U)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_USER_AUDIT_FAIL\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_USER_AUDIT_OK\n"
+    );
 }
 
 /* ---------- Kernel Main ---------- */

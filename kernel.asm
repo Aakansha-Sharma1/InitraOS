@@ -507,83 +507,293 @@ user_mode_code_start:
 
 user_mode_entry:
 
-    mov edi, 0xB8C80
-
-    call .get_ip
-
-.get_ip:
-    pop esi
-
-    add esi, user_mode_user_message - .get_ip
-
-
-.user_print:
-
-    lodsb
-
-    test al, al
-
-    jz .test_syscall
-
-    mov ah, 0x07
-
-    stosw
-
-    jmp .user_print
-
-
-.test_syscall:
-
-    ; Mark that the loaded user program actually
-    ; reached this point in Ring 3.
+    ; -----------------------------------------------------
+    ; First user-space security utility:
     ;
-    ; USER_STACK_BASE is the existing user-writable
-    ; stack page at 0x007FF000.
+    ;     secaudit --recent
+    ;
+    ; This program runs entirely in Ring 3 and accesses
+    ; security audit information only through INT 0x80.
+    ; -----------------------------------------------------
+
+    ; Show command title.
+    mov edi, 0xB8C20
+
+    call user_get_pc
+    add esi, user_secaudit_banner - user_pc_here
+    call user_print_string
+
+    ; -----------------------------------------------------
+    ; Preserve the existing user-program execution marker.
+    ; The kernel checks this after the Ring 3 task exits.
+    ; -----------------------------------------------------
     mov dword [0x007FF000], 0x45584543
 
-    ; Test GETPID.
+    ; -----------------------------------------------------
+    ; Verify GETPID still works for the user program.
+    ; -----------------------------------------------------
+
     mov eax, 2
     int 0x80
 
     ; The first kernel task has PID 1.
-    ; user_test is the next task, so its PID is 2.
+    ; This user task is expected to have PID 2.
     cmp eax, ebx
-    jne .syscall_test_fail
+    jne user_secaudit_fail
 
-    ; Test the security-protected syscall.
-    ;
-    ; This code is executing in Ring 3, so the kernel-only
-    ; operation must be denied.
+    ; -----------------------------------------------------
+    ; Verify the kernel-only security operation is denied.
+    ; -----------------------------------------------------
+
     mov eax, 6
     int 0x80
 
     ; SECURITY_DENIED = 0.
     cmp eax, 0
-    jne .syscall_test_fail
+    jne user_secaudit_fail
 
-.test_exit:
+    ; -----------------------------------------------------
+    ; Ask the kernel how many audit events currently exist.
+    ;
+    ; At this point there should be:
+    ;
+    ;   event 0 = user denied
+    ;   event 1 = kernel allowed
+    ;   event 2 = this real Ring 3 syscall denial
+    ; -----------------------------------------------------
 
-    ; Test SYSCALL_EXIT.
-    ; syscall_entry detects syscall number 0
-    ; and switches back to kernel_context.
-    mov eax, 0
-
+    mov eax, 7
     int 0x80
 
-.syscall_test_fail:
+    ; Three events are expected.
+    cmp eax, 3
+    jne user_secaudit_fail
 
-    ; GETPID returned an unexpected value.
-    ; Do not exit the task, so the test cannot
-    ; falsely report success.
-    jmp .syscall_test_fail
+    mov ebp, eax
+    xor edx, edx
 
-.user_halt:
+user_secaudit_read_loop:
 
-    jmp .user_halt
+    cmp edx, ebp
+    jae user_secaudit_done
+
+    ; -----------------------------------------------------
+    ; Read one audit event.
+    ;
+    ; EBX = event index
+    ; ECX = user-writable destination
+    ; -----------------------------------------------------
+
+    mov eax, 8
+    mov ebx, edx
+    mov ecx, 0x007FF100
+    int 0x80
+
+    ; SECURITY_ALLOWED = 1.
+    cmp eax, 1
+    jne user_secaudit_fail
+
+    ; -----------------------------------------------------
+    ; Calculate a separate VGA row for this event.
+    ;
+    ; Event 0 -> row 20
+    ; Event 1 -> row 21
+    ; Event 2 -> row 22
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8C80
+
+    mov eax, edx
+    imul eax, 160
+    add edi, eax
+
+    ; Print:
+    ;
+    ;   EVT=XXXXXXXX PID=XXXXXXXX PRIV=XXXXXXXX
+    ;   OP=XXXXXXXX RES=XXXXXXXX
+    ;
+    call user_get_pc
+    add esi, user_secaudit_event_prefix - user_pc_here
+    call user_print_string
+
+    ; Sequence
+    mov eax, [0x007FF100]
+    call user_print_hex32
+
+    call user_get_pc
+    add esi, user_secaudit_pid_prefix - user_pc_here
+    call user_print_string
+
+    ; PID
+    mov eax, [0x007FF100 + 4]
+    call user_print_hex32
+
+    call user_get_pc
+    add esi, user_secaudit_priv_prefix - user_pc_here
+    call user_print_string
+
+    ; Privilege
+    mov eax, [0x007FF100 + 8]
+    call user_print_hex32
+
+    call user_get_pc
+    add esi, user_secaudit_op_prefix - user_pc_here
+    call user_print_string
+
+    ; Operation
+    mov eax, [0x007FF100 + 12]
+    call user_print_hex32
+
+    call user_get_pc
+    add esi, user_secaudit_result_prefix - user_pc_here
+    call user_print_string
+
+    ; Result
+    mov eax, [0x007FF100 + 16]
+    call user_print_hex32
+
+    inc edx
+    jmp user_secaudit_read_loop
 
 
-user_mode_user_message db \
-    'USER MODE WORKED! TESTING SYSCALL...', 0
+user_secaudit_done:
+
+    ; -----------------------------------------------------
+    ; Tell the kernel that the real Ring 3 audit reader
+    ; successfully completed all three audit reads.
+    ;
+    ; This location is inside the existing user-writable
+    ; stack page but away from the normal stack top.
+    ; -----------------------------------------------------
+
+    mov dword [0x007FF180], 0x53454341
+
+    ; -----------------------------------------------------
+    ; Exit the user process.
+    ; -----------------------------------------------------
+
+    mov eax, 0
+    int 0x80
+
+
+user_secaudit_fail:
+
+    ; A failed security test must never claim success.
+    jmp user_secaudit_fail
+
+
+; =========================================================
+; User-space helper: obtain current instruction address.
+;
+; Returns:
+;   ESI = address of user_pc_here
+; =========================================================
+
+user_get_pc:
+
+    call user_pc_here
+
+user_pc_here:
+
+    pop esi
+    ret
+
+
+; =========================================================
+; User-space string output.
+;
+; Input:
+;   ESI = zero-terminated string
+;   EDI = VGA output address
+; =========================================================
+
+user_print_string:
+
+user_print_string_loop:
+
+    lodsb
+
+    test al, al
+    jz user_print_string_done
+
+    mov ah, 0x07
+    stosw
+
+    jmp user_print_string_loop
+
+
+user_print_string_done:
+
+    ret
+
+
+; =========================================================
+; User-space hexadecimal output.
+;
+; Input:
+;   EAX = 32-bit value
+;   EDI = VGA output address
+;
+; Output:
+;   8 hexadecimal characters
+; =========================================================
+
+user_print_hex32:
+
+    mov ecx, 8
+
+user_print_hex32_loop:
+
+    rol eax, 4
+
+    mov ebx, eax
+    and ebx, 0x0F
+
+    cmp ebx, 10
+    jb user_print_hex32_digit
+
+    add ebx, 'A' - 10
+    jmp user_print_hex32_write
+
+
+user_print_hex32_digit:
+
+    add ebx, '0'
+
+
+user_print_hex32_write:
+
+    mov al, bl
+    mov ah, 0x07
+    stosw
+
+    loop user_print_hex32_loop
+
+    ret
+
+
+; =========================================================
+; secaudit strings
+; =========================================================
+
+user_secaudit_banner db \
+    'SECAUDIT -- RECENT SECURITY EVENTS', 0
+
+user_secaudit_event_prefix db \
+    'EVT=', 0
+
+user_secaudit_pid_prefix db \
+    ' PID=', 0
+
+user_secaudit_priv_prefix db \
+    ' PRIV=', 0
+
+user_secaudit_op_prefix db \
+    ' OP=', 0
+
+user_secaudit_result_prefix db \
+    ' RES=', 0
+
 
 user_mode_code_end:
 
