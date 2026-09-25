@@ -33,6 +33,11 @@ $(BUILD)/kernel.c.o: kernel.c | $(BUILD)
 		-fno-asynchronous-unwind-tables -fno-unwind-tables \
 		-c kernel.c -o $@
 
+$(BUILD)/security.c.o: security.c security.h | $(BUILD)
+	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -fno-unwind-tables \
+		-c security.c -o $@
+
 $(BUILD)/fs/vfs.c.o: fs/vfs.c fs/vfs.h fs/file.h fs/inode.h fs/block.h | $(BUILD)
 	mkdir -p $(@D)
 	$(CC) -m32 -ffreestanding -fno-pie -fno-stack-protector \
@@ -71,12 +76,14 @@ $(BUILD)/kernel.asm.o: kernel.asm idt.inc serial.inc $(BUILD)/kernel64.c.bin | $
 $(BUILD)/kernel.elf: \
 	$(BUILD)/kernel.asm.o \
 	$(BUILD)/kernel.c.o \
+	$(BUILD)/security.c.o \
 	$(BUILD)/fs/initrafs.c.o \
 	$(BUILD)/fs/vfs.c.o \
 	linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ \
 		$(BUILD)/kernel.asm.o \
 		$(BUILD)/kernel.c.o \
+		$(BUILD)/security.c.o \
 		$(BUILD)/fs/initrafs.c.o \
 		$(BUILD)/fs/vfs.c.o
 

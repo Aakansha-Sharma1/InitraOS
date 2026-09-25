@@ -2,6 +2,7 @@
 #include "program.h"
 #include "fs/initrafs.h"
 #include "fs/vfs.h"
+#include "security.h"
 
 #define KEYBOARD_BUFFER_SIZE 128
 
@@ -66,6 +67,7 @@ static void initrafs_instance_test(void);
 static void initrafs_vfs_test(void);
 static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
+static void security_core_test(void);
 
 
 static int page_map(
@@ -6203,6 +6205,119 @@ fail:
     );
 }
 
+static void security_core_test(void)
+{
+    security_audit_event_t denied_event;
+    security_audit_event_t allowed_event;
+
+    security_init();
+
+    /*
+     * A Ring 3 user must not be allowed to perform
+     * a kernel-only protected operation.
+     */
+    if (security_authorize(
+            100U,
+            SECURITY_PRIVILEGE_USER,
+            SECURITY_OPERATION_PROTECTED_TEST,
+            SECURITY_PRIVILEGE_KERNEL
+        ) != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_USER\n"
+        );
+
+        return;
+    }
+
+    /*
+     * A Ring 0 kernel caller is allowed.
+     */
+    if (security_authorize(
+            101U,
+            SECURITY_PRIVILEGE_KERNEL,
+            SECURITY_OPERATION_PROTECTED_TEST,
+            SECURITY_PRIVILEGE_KERNEL
+        ) != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_KERNEL\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Both authorization decisions must have generated
+     * audit events.
+     */
+    if (security_audit_count() != 2U)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_AUDIT_COUNT\n"
+        );
+
+        return;
+    }
+
+    if (!security_audit_get(
+            0U,
+            &denied_event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_AUDIT_READ\n"
+        );
+
+        return;
+    }
+
+    if (!security_audit_get(
+            1U,
+            &allowed_event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_AUDIT_READ\n"
+        );
+
+        return;
+    }
+
+    if (denied_event.pid != 100U ||
+        denied_event.privilege !=
+            SECURITY_PRIVILEGE_USER ||
+        denied_event.operation !=
+            SECURITY_OPERATION_PROTECTED_TEST ||
+        denied_event.result !=
+            SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_DENIED\n"
+        );
+
+        return;
+    }
+
+    if (allowed_event.pid != 101U ||
+        allowed_event.privilege !=
+            SECURITY_PRIVILEGE_KERNEL ||
+        allowed_event.operation !=
+            SECURITY_OPERATION_PROTECTED_TEST ||
+        allowed_event.result !=
+            SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_CORE_FAIL_ALLOWED\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_CORE_OK\n"
+    );
+}
 
 /* ---------- Kernel Main ---------- */
 
@@ -6385,6 +6500,7 @@ void kernel_main(void)
     process_task_link_test();
     syscall_dispatcher_test();
     syscall_memory_test();
+    security_core_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
