@@ -5862,6 +5862,35 @@ static void initrafs_directory_path_test(void)
         return;
     }
 
+/*
+ * Traversal above the filesystem root must fail.
+ */
+if (initrafs_path_lookup(
+        &namespace,
+        "/../docs",
+        &inode_number))
+{
+    c_serial_print(
+        "[InitraOS] INITRAFS_PATH_FAIL\n"
+    );
+    return;
+}
+
+if (initrafs_path_lookup(
+        &namespace,
+        "/../../docs",
+        &inode_number))
+{
+    c_serial_print(
+        "[InitraOS] INITRAFS_PATH_FAIL\n"
+    );
+    return;
+}
+
+c_serial_print(
+    "[InitraOS] INITRAFS_PATH_TRAVERSAL_OK\n"
+);
+
     if (!initrafs_path_lookup(
             &namespace,
             "/docs",

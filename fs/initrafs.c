@@ -2816,6 +2816,7 @@ int initrafs_path_lookup(
 )
 {
     unsigned int position = 0;
+    unsigned int depth = 0;
     inode_number_t current_inode;
     char component[
         INITRAFS_MAX_NAME_LENGTH + 1U
@@ -2873,16 +2874,29 @@ int initrafs_path_lookup(
             return 0;
         }
 
+        /*
+         * Current directory.
+         */
         if (component[0] == '.' &&
             component[1] == 0)
         {
             continue;
         }
 
+        /*
+         * Parent directory.
+         *
+         * Never allow traversal above the filesystem root.
+         */
         if (component[0] == '.' &&
             component[1] == '.' &&
             component[2] == 0)
         {
+            if (depth == 0)
+            {
+                return 0;
+            }
+
             if (!initrafs_directory_lookup(
                     current_node->entries,
                     current_node->entry_count,
@@ -2891,6 +2905,8 @@ int initrafs_path_lookup(
             {
                 return 0;
             }
+
+            depth--;
 
             continue;
         }
@@ -2903,6 +2919,8 @@ int initrafs_path_lookup(
         {
             return 0;
         }
+
+        depth++;
     }
 }
 
