@@ -3172,6 +3172,44 @@ static void task_set_state(
         state;
 }
 
+static int process_terminate(task_t *task)
+{
+    /*
+     * A process may terminate only its currently
+     * executing task.
+     */
+    if (task == 0 ||
+        current_task == 0 ||
+        task != current_task)
+    {
+        return 0;
+    }
+
+    /*
+     * Only a running task may perform termination.
+     */
+    if (task->state != TASK_RUNNING)
+    {
+        return 0;
+    }
+
+    task_set_state(
+        task,
+        TASK_FINISHED
+    );
+
+    /*
+     * Keep the owning process state consistent
+     * with its task.
+     */
+    if (task->process != 0)
+    {
+        task->process->state =
+            TASK_FINISHED;
+    }
+
+    return 1;
+}
 
 /* ---------- Scheduler ---------- */
 
@@ -3278,13 +3316,9 @@ static void task_exit(void)
 
 void syscall_exit(void)
 {
-    if (current_task != 0)
+    if (current_task != 0 &&
+        process_terminate(current_task))
     {
-        task_set_state(
-            current_task,
-            TASK_FINISHED
-        );
-
         task_switch(
             current_task->context,
             &kernel_context
@@ -6681,6 +6715,108 @@ static void security_resource_access_test(void)
     );
 }
 
+static void process_termination_test(void)
+{
+    task_t *previous_task =
+        current_task;
+
+    task_t *caller =
+        task_create_user(
+            0,
+            USER_CODE_BASE
+        );
+
+    task_t *target =
+        task_create_user(
+            0,
+            USER_CODE_BASE
+        );
+
+    if (caller == 0 ||
+        target == 0)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TERMINATION_FAIL_CREATE\n"
+        );
+
+        if (caller != 0)
+        {
+            task_destroy(caller);
+        }
+
+        if (target != 0)
+        {
+            task_destroy(target);
+        }
+
+        return;
+    }
+
+    /*
+     * Simulate a running caller.
+     */
+    current_task =
+        caller;
+
+    task_set_state(
+        caller,
+        TASK_RUNNING
+    );
+
+    task_set_state(
+        target,
+        TASK_READY
+    );
+
+    /*
+     * A caller must not terminate another task.
+     */
+    if (process_terminate(target) != 0 ||
+        target->state != TASK_READY)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TERMINATION_FAIL_TARGET\n"
+        );
+
+        current_task =
+            previous_task;
+
+        task_destroy(caller);
+        task_destroy(target);
+
+        return;
+    }
+
+    /*
+     * A running caller may terminate itself.
+     */
+    if (process_terminate(caller) != 1 ||
+        caller->state != TASK_FINISHED)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_TERMINATION_FAIL_SELF\n"
+        );
+
+        current_task =
+            previous_task;
+
+        task_destroy(caller);
+        task_destroy(target);
+
+        return;
+    }
+
+    current_task =
+        previous_task;
+
+    task_destroy(caller);
+    task_destroy(target);
+
+    c_serial_print(
+        "[InitraOS] PROCESS_TERMINATION_POLICY_OK\n"
+    );
+}
+
 static void security_audit_syscall_test(void)
 {
     security_audit_event_t *event =
@@ -7086,6 +7222,8 @@ task_t *next_task =
                 );
 
                 security_resource_access_test();
+
+                process_termination_test();
             }
             else
             {
