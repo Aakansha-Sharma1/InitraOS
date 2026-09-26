@@ -110,6 +110,23 @@ int vfs_unmount(
 );
 
 /*
+ * Caller identity used by filesystem access checks.
+ *
+ * Kernel code starts as UID/GID 0.
+ * User-space callers will set their process identity
+ * at the syscall boundary in a later step.
+ */
+int vfs_set_caller_identity(
+    unsigned int uid,
+    unsigned int gid
+);
+
+void vfs_get_caller_identity(
+    unsigned int *uid,
+    unsigned int *gid
+);
+
+/*
  * File operations.
  */
 

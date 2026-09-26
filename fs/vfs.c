@@ -11,6 +11,15 @@ static filesystem_t *vfs_active_filesystem = 0;
 static vfs_file_t
     vfs_open_files[VFS_MAX_OPEN_FILES];
 
+/*
+ * Current filesystem caller identity.
+ *
+ * Start as root because the existing kernel-side
+ * filesystem tests execute in kernel context.
+ */
+static unsigned int vfs_caller_uid = 0U;
+static unsigned int vfs_caller_gid = 0U;
+
 
 static int vfs_filesystem_is_registered(
     filesystem_t *filesystem
@@ -76,6 +85,38 @@ static vfs_file_t *vfs_file_slot(void)
     return 0;
 }
 
+int vfs_set_caller_identity(
+    unsigned int uid,
+    unsigned int gid
+)
+{
+    vfs_caller_uid =
+        uid;
+
+    vfs_caller_gid =
+        gid;
+
+    return 1;
+}
+
+
+void vfs_get_caller_identity(
+    unsigned int *uid,
+    unsigned int *gid
+)
+{
+    if (uid != 0)
+    {
+        *uid =
+            vfs_caller_uid;
+    }
+
+    if (gid != 0)
+    {
+        *gid =
+            vfs_caller_gid;
+    }
+}
 
 /* ---------- Filesystem registry ---------- */
 
@@ -780,6 +821,52 @@ int vfs_self_test(void)
     vfs_test_mkdir_count = 0;
     vfs_test_rmdir_count = 0;
     vfs_test_remove_count = 0;
+
+    /*
+     * Verify that VFS can carry the caller's
+     * filesystem identity.
+     */
+    {
+        unsigned int uid;
+        unsigned int gid;
+
+        if (!vfs_set_caller_identity(
+                1000U,
+                1000U
+            ))
+        {
+            return 0;
+        }
+
+        vfs_get_caller_identity(
+            &uid,
+            &gid
+        );
+
+        if (uid != 1000U ||
+            gid != 1000U)
+        {
+            vfs_set_caller_identity(
+                0U,
+                0U
+            );
+
+            return 0;
+        }
+
+    /*
+         * Restore kernel/root identity for the
+         * remainder of the existing VFS tests.
+         */
+        vfs_set_caller_identity(
+            0U,
+            0U
+        );
+
+        c_serial_print(
+            "[InitraOS] VFS_IDENTITY_OK\n"
+        );
+    }
 
     vfs_test_inode.inode_number = 2U;
     vfs_test_inode.type = INODE_TYPE_FILE;
