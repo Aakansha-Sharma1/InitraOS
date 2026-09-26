@@ -133,6 +133,19 @@ int initrafs_inode_init(
     unsigned int mode
 );
 
+/*
+ * Verify the integrity checksum stored in an on-disk inode.
+ */
+int initrafs_inode_integrity_verify(
+    const initrafs_disk_inode_t *inode
+);
+
+int initrafs_inode_set_owner_group(
+    initrafs_disk_inode_t *inode,
+    unsigned int owner,
+    unsigned int group
+);
+
 int initrafs_inode_create(
     initrafs_inode_allocator_t *allocator,
     struct fs_inode *inode,

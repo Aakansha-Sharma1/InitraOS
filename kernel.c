@@ -4037,6 +4037,44 @@ static void initrafs_root_test(void)
         );
         return;
     }
+
+    if (!initrafs_inode_integrity_verify(
+            &root_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    root_inode.mode ^=
+        0x00000001U;
+
+    if (initrafs_inode_integrity_verify(
+            &root_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    root_inode.mode ^=
+        0x00000001U;
+
+    if (!initrafs_inode_integrity_verify(
+            &root_inode))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_ROOT_FAIL\n"
+        );
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_INTEGRITY_OK\n"
+    );
+
     c_serial_print(
         "[InitraOS] INITRAFS_SYSTEM_PROTECTION_OK\n"
     );
@@ -6222,8 +6260,14 @@ static void initrafs_vfs_test(void)
     file_inode.owner = 1000U;
     file_inode.group = 2000U;
 
-    disk_inode.owner = 1000U;
-    disk_inode.group = 2000U;
+    if (!initrafs_inode_set_owner_group(
+            &disk_inode,
+            1000U,
+            2000U
+        ))
+    {
+        goto fail;
+    }
 
     /*
      * The owner is allowed to read and write.

@@ -64,6 +64,12 @@
 #define INITRAFS_INODE_FLAG_SYSTEM_PROTECTED 0x00000001U
 
 /*
+ * First four bytes of the inode reserved area store
+ * the metadata integrity checksum.
+ */
+#define INITRAFS_INODE_INTEGRITY_BYTES 4U
+
+/*
  * On-disk superblock.
  *
  * No pointers are stored here.

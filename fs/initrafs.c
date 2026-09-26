@@ -32,6 +32,10 @@ static void initrafs_copy_name(
     }
 }
 
+static void initrafs_inode_integrity_update(
+    initrafs_disk_inode_t *inode
+);
+
 int initrafs_superblock_init(
     initrafs_superblock_t *superblock,
     unsigned int total_blocks
@@ -197,6 +201,34 @@ int initrafs_root_inode_init(
 
     inode->direct_blocks[0] =
         superblock->data_start;
+
+    initrafs_inode_integrity_update(
+        inode
+    );
+
+    return 1;
+}
+
+int initrafs_inode_set_owner_group(
+    initrafs_disk_inode_t *inode,
+    unsigned int owner,
+    unsigned int group
+)
+{
+    if (inode == 0)
+    {
+        return 0;
+    }
+
+    inode->owner =
+        owner;
+
+    inode->group =
+        group;
+
+    initrafs_inode_integrity_update(
+        inode
+    );
 
     return 1;
 }
@@ -1126,6 +1158,113 @@ int initrafs_directory_add(
     return 1;
 }
 
+static unsigned int initrafs_inode_integrity_checksum(
+    const initrafs_disk_inode_t *inode
+)
+{
+    initrafs_disk_inode_t copy;
+
+    unsigned char *bytes;
+
+    unsigned int hash =
+        2166136261U;
+
+    if (inode == 0)
+    {
+        return 0U;
+    }
+
+    copy = *inode;
+
+    for (unsigned int index = 0;
+         index < INITRAFS_INODE_INTEGRITY_BYTES;
+         index++)
+    {
+        copy.reserved[index] = 0U;
+    }
+
+    bytes =
+        (unsigned char *)&copy;
+
+    for (unsigned int index = 0;
+         index < sizeof(initrafs_disk_inode_t);
+         index++)
+    {
+        hash ^=
+            bytes[index];
+
+        hash *=
+            16777619U;
+    }
+
+    return hash;
+}
+
+static void initrafs_inode_integrity_update(
+    initrafs_disk_inode_t *inode
+)
+{
+    unsigned int checksum;
+
+    if (inode == 0)
+    {
+        return;
+    }
+
+    for (unsigned int index = 0;
+         index < INITRAFS_INODE_INTEGRITY_BYTES;
+         index++)
+    {
+        inode->reserved[index] =
+            0U;
+    }
+
+    checksum =
+        initrafs_inode_integrity_checksum(
+            inode
+        );
+
+    inode->reserved[0] =
+        (unsigned char)(checksum & 0xFFU);
+
+    inode->reserved[1] =
+        (unsigned char)((checksum >> 8) & 0xFFU);
+
+    inode->reserved[2] =
+        (unsigned char)((checksum >> 16) & 0xFFU);
+
+    inode->reserved[3] =
+        (unsigned char)((checksum >> 24) & 0xFFU);
+}
+
+int initrafs_inode_integrity_verify(
+    const initrafs_disk_inode_t *inode
+)
+{
+    unsigned int stored_checksum;
+
+    unsigned int calculated_checksum;
+
+    if (inode == 0)
+    {
+        return 0;
+    }
+
+    stored_checksum =
+        (unsigned int)inode->reserved[0] |
+        ((unsigned int)inode->reserved[1] << 8) |
+        ((unsigned int)inode->reserved[2] << 16) |
+        ((unsigned int)inode->reserved[3] << 24);
+
+    calculated_checksum =
+        initrafs_inode_integrity_checksum(
+            inode
+        );
+
+    return stored_checksum ==
+        calculated_checksum;
+}
+
 int initrafs_directory_remove(
     initrafs_disk_dirent_t *entries,
     unsigned int entry_count,
@@ -1229,6 +1368,10 @@ int initrafs_inode_map_block(
         logical_block] =
         physical_block;
 
+    initrafs_inode_integrity_update(
+        inode
+    );
+
     return 1;
 }
 
@@ -1288,6 +1431,10 @@ int initrafs_inode_unmap_block(
     inode->direct_blocks[
         logical_block] = 0U;
 
+    initrafs_inode_integrity_update(
+        inode
+    );
+
     return 1;
 }
 
@@ -1310,7 +1457,10 @@ static int initrafs_file_inode_pair_valid(
         disk_inode->type !=
             INITRAFS_TYPE_FILE ||
         inode->size !=
-            disk_inode->size)
+            disk_inode->size ||
+        !initrafs_inode_integrity_verify(
+            disk_inode
+        ))
     {
         return 0;
     }
@@ -1378,6 +1528,9 @@ int initrafs_file_create(
     disk_inode->owner = 0;
     disk_inode->group = 0;
     disk_inode->link_count = 1U;
+    initrafs_inode_integrity_update(
+        disk_inode
+    );
 
     return 1;
 }
@@ -1847,6 +2000,10 @@ int initrafs_file_write(
 
         inode->size =
             end_position;
+
+        initrafs_inode_integrity_update(
+            disk_inode
+        );
     }
 
     return (int)bytes_done;
@@ -1923,6 +2080,10 @@ int initrafs_directory_create(
     disk_inode->owner = 0;
     disk_inode->group = 0;
     disk_inode->link_count = 2U;
+
+    initrafs_inode_integrity_update(
+        disk_inode
+    );
 
     if (!initrafs_root_directory_init(
             entries,
@@ -3232,6 +3393,10 @@ int initrafs_path_remove_directory(
     {
         parent_node->disk_inode->link_count--;
     }
+
+    initrafs_inode_integrity_update(
+        parent_node->disk_inode
+    );
 
     if (!initrafs_namespace_unregister(
             namespace,
