@@ -127,6 +127,46 @@ unsigned int security_authorize(
 
     return result;
 }
+unsigned int security_resource_authorize(
+    unsigned int caller_pid,
+    unsigned int caller_privilege,
+    unsigned int resource_owner_pid
+)
+{
+    unsigned int result;
+
+    /*
+     * Kernel privilege can access any process resource.
+     */
+    if (caller_privilege <= SECURITY_PRIVILEGE_KERNEL)
+    {
+        result = SECURITY_ALLOWED;
+    }
+    /*
+     * A user process may access its own resource.
+     */
+    else if (caller_pid == resource_owner_pid)
+    {
+        result = SECURITY_ALLOWED;
+    }
+    else
+    {
+        result = SECURITY_DENIED;
+    }
+
+    /*
+     * Every resource authorization decision becomes
+     * an audit event.
+     */
+    security_audit_record(
+        caller_pid,
+        caller_privilege,
+        SECURITY_OPERATION_RESOURCE_ACCESS,
+        result
+    );
+
+    return result;
+}
 
 unsigned int security_audit_count(void)
 {

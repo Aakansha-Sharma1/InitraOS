@@ -22,6 +22,7 @@
 #define SECURITY_MAX_AUDIT_EVENTS 16U
 
 #define SECURITY_OPERATION_PROTECTED_TEST 1U
+#define SECURITY_OPERATION_RESOURCE_ACCESS 2U
 
 typedef struct security_audit_event
 {
@@ -51,6 +52,23 @@ unsigned int security_authorize(
     unsigned int caller_privilege,
     unsigned int operation,
     unsigned int required_privilege
+);
+
+/*
+ * Check whether a caller may access a resource owned by
+ * another process.
+ *
+ * Kernel callers may access any resource.
+ * User callers may access resources owned by their own PID.
+ *
+ * Returns:
+ *   SECURITY_ALLOWED
+ *   SECURITY_DENIED
+ */
+unsigned int security_resource_authorize(
+    unsigned int caller_pid,
+    unsigned int caller_privilege,
+    unsigned int resource_owner_pid
 );
 
 /*

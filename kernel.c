@@ -71,6 +71,7 @@ static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
 static void security_core_test(void);
 static void security_audit_syscall_test(void);
+static void security_resource_access_test(void);
 
 
 static int page_map(
@@ -6624,6 +6625,62 @@ static void security_core_test(void)
     );
 }
 
+static void security_resource_access_test(void)
+{
+    /*
+     * A user process may access its own resource.
+     */
+    if (security_resource_authorize(
+            100U,
+            SECURITY_PRIVILEGE_USER,
+            100U
+        ) != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_RESOURCE_FAIL_OWNER\n"
+        );
+
+        return;
+    }
+
+    /*
+     * A different user process must not access
+     * another process's resource.
+     */
+    if (security_resource_authorize(
+            101U,
+            SECURITY_PRIVILEGE_USER,
+            100U
+        ) != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_RESOURCE_FAIL_ISOLATION\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Kernel privilege may access the resource.
+     */
+    if (security_resource_authorize(
+            102U,
+            SECURITY_PRIVILEGE_KERNEL,
+            100U
+        ) != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_RESOURCE_FAIL_KERNEL\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_RESOURCE_ACCESS_OK\n"
+    );
+}
+
 static void security_audit_syscall_test(void)
 {
     security_audit_event_t *event =
@@ -7027,6 +7084,8 @@ task_t *next_task =
                 security_syscall_test(
                     user_test
                 );
+
+                security_resource_access_test();
             }
             else
             {
