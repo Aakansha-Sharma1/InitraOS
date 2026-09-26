@@ -802,6 +802,108 @@ int initrafs_inode_create(
 
     return 1;
 }
+
+int initrafs_inode_check_permission(
+    const struct fs_inode *inode,
+    unsigned int user,
+    unsigned int group,
+    unsigned int requested
+)
+{
+    unsigned int allowed = 0;
+    unsigned int mode;
+
+    if (inode == 0 ||
+        requested == 0 ||
+        (requested &
+         ~(INITRAFS_PERMISSION_READ |
+           INITRAFS_PERMISSION_WRITE |
+           INITRAFS_PERMISSION_EXECUTE)) != 0)
+    {
+        return 0;
+    }
+
+    mode =
+        inode->mode;
+
+    /*
+     * Owner permissions take precedence when
+     * the caller owns the inode.
+     */
+    if (user == inode->owner)
+    {
+        if ((mode & 0400U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_READ;
+        }
+
+        if ((mode & 0200U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_WRITE;
+        }
+
+        if ((mode & 0100U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_EXECUTE;
+        }
+    }
+    /*
+     * Otherwise use group permissions when the
+     * caller belongs to the inode's group.
+     */
+    else if (group == inode->group)
+    {
+        if ((mode & 0040U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_READ;
+        }
+
+        if ((mode & 0020U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_WRITE;
+        }
+
+        if ((mode & 0010U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_EXECUTE;
+        }
+    }
+    /*
+     * Everyone else uses the "other" permissions.
+     */
+    else
+    {
+        if ((mode & 0004U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_READ;
+        }
+
+        if ((mode & 0002U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_WRITE;
+        }
+
+        if ((mode & 0001U) != 0)
+        {
+            allowed |=
+                INITRAFS_PERMISSION_EXECUTE;
+        }
+    }
+
+    return (
+        (allowed & requested) ==
+        requested
+    );
+}
+
 static unsigned int initrafs_name_length(
     const char *name
 )

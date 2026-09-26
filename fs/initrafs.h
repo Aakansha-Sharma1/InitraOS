@@ -110,6 +110,19 @@ int initrafs_inode_free(
     unsigned int inode
 );
 
+/* ---------- Filesystem permissions ---------- */
+
+#define INITRAFS_PERMISSION_READ    0x01U
+#define INITRAFS_PERMISSION_WRITE   0x02U
+#define INITRAFS_PERMISSION_EXECUTE 0x04U
+
+int initrafs_inode_check_permission(
+    const struct fs_inode *inode,
+    unsigned int user,
+    unsigned int group,
+    unsigned int requested
+);
+
 
 /* ---------- In-memory inode ---------- */
 

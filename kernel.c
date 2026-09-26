@@ -1185,11 +1185,20 @@ struct task;
 
 typedef struct process process_t;
 
+#define INITRAOS_ROOT_UID    0U
+#define INITRAOS_ROOT_GID    0U
+
+#define INITRAOS_DEFAULT_UID 1000U
+#define INITRAOS_DEFAULT_GID 1000U
+
 struct process
 {
     unsigned int pid;
     unsigned int state;
     unsigned int privilege;
+
+    unsigned int uid;
+    unsigned int gid;
 
     process_address_space_t *address_space;
 
@@ -1224,6 +1233,12 @@ static process_t *process_create(void)
 
     process->privilege =
         TASK_USER;
+
+    process->uid =
+        INITRAOS_DEFAULT_UID;
+
+    process->gid =
+        INITRAOS_DEFAULT_GID;
 
     process->address_space =
         address_space_create();
@@ -1925,6 +1940,19 @@ static void process_create_test(void)
 
     c_serial_print(
         "[InitraOS] PROCESS_CREATE_STATE_OK\n");
+
+    if (process->uid != INITRAOS_DEFAULT_UID ||
+        process->gid != INITRAOS_DEFAULT_GID)
+    {
+        c_serial_print(
+            "[InitraOS] PROCESS_CREATE_FAIL_IDENTITY\n");
+
+        process_destroy(process);
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] PROCESS_CREATE_IDENTITY_OK\n");
 
     if (process->address_space == 0)
     {
@@ -4345,6 +4373,67 @@ static void initrafs_inode_create_test(void)
             &directory_inode,
             INODE_TYPE_DIRECTORY,
             0755U))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    /*
+     * Verify basic owner/group/other permission
+     * evaluation.
+     */
+    file_inode.owner = 100U;
+    file_inode.group = 200U;
+    file_inode.mode = 0640U;
+
+    if (!initrafs_inode_check_permission(
+            &file_inode,
+            100U,
+            999U,
+            INITRAFS_PERMISSION_READ |
+            INITRAFS_PERMISSION_WRITE
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (!initrafs_inode_check_permission(
+            &file_inode,
+            101U,
+            200U,
+            INITRAFS_PERMISSION_READ
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_inode_check_permission(
+            &file_inode,
+            101U,
+            200U,
+            INITRAFS_PERMISSION_WRITE
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
+        );
+        return;
+    }
+
+    if (initrafs_inode_check_permission(
+            &file_inode,
+            101U,
+            201U,
+            INITRAFS_PERMISSION_READ
+        ))
     {
         c_serial_print(
             "[InitraOS] INITRAFS_INODE_CREATE_FAIL\n"
