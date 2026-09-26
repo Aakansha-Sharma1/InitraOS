@@ -7998,6 +7998,7 @@ void keyboard_handle(
         case 0x32: c = 'm'; break;
 
         case 0x39: c = ' '; break;
+        case 0x0C: c = '-'; break;
     }
 
     /* Shift + lowercase letter */
