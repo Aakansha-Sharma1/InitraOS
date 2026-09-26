@@ -33,6 +33,8 @@ global enter_user_mode
 global user_mode_entry
 global user_mode_code_start
 global user_mode_code_end
+global user_secaudit_code_start
+global user_secaudit_code_end
 global enable_long_mode
 global syscall_entry
 
@@ -43,6 +45,19 @@ extern syscall_dispatcher
 extern syscall_exit
 extern __bss_start
 extern __bss_end
+
+section .data
+
+global kernel_autoboot_mode
+
+kernel_autoboot_mode:
+%ifdef AUTOBOOT
+    db 1
+%else
+    db 0
+%endif
+
+section .text
 
 kernel_start:
 
@@ -487,6 +502,15 @@ enter_user_mode:
 ; kernel memory at 0x00008800.
 ; =========================================================
 
+; =========================================================
+; Minimal Ring 3 boot validation program.
+;
+; This program is used only to verify that the real
+; user-mode execution path still works during boot.
+;
+; It intentionally produces no user-visible output.
+; =========================================================
+
 user_mode_code_start:
 
     ; -----------------------------------------------------
@@ -506,6 +530,59 @@ user_mode_code_start:
     dd 0
 
 user_mode_entry:
+
+    ; Mark successful execution in the user-writable
+    ; stack page so the kernel can verify that Ring 3
+    ; code really executed.
+    mov dword [0x007FF000], 0x45584543
+
+    ; Verify GETPID.
+    mov eax, 2
+    int 0x80
+
+    ; EBX contains the task ID initialized by task creation.
+    cmp eax, ebx
+    jne .boot_user_fail
+
+    ; Verify the kernel-enforced security check.
+    mov eax, 6
+    int 0x80
+
+    ; Ring 3 must be denied.
+    cmp eax, 0
+    jne .boot_user_fail
+
+    ; Exit normally.
+    mov eax, 0
+    int 0x80
+
+.boot_user_fail:
+
+    ; Never report successful execution after a failed test.
+    jmp .boot_user_fail
+
+
+user_mode_code_end:
+
+user_secaudit_code_start:
+
+    ; -----------------------------------------------------
+    ; InitraOS native user program header.
+    ;
+    ; entry      = 0
+    ; code_size  = user program code size
+    ; data_size  = 0
+    ; bss_size   = 0
+    ; -----------------------------------------------------
+
+    dd 0x49504F53
+    dd 1
+    dd 0
+    dd user_secaudit_code_end - user_secaudit_entry
+    dd 0
+    dd 0
+
+user_secaudit_entry:
 
     ; -----------------------------------------------------
     ; First user-space security utility:
@@ -565,9 +642,11 @@ user_mode_entry:
     mov eax, 7
     int 0x80
 
-    ; Three events are expected.
-    cmp eax, 3
-    jne user_secaudit_fail
+    ; At least one audit event must exist.
+    ; Keep the returned count so the utility can be
+    ; launched more than once.
+    cmp eax, 0
+    je user_secaudit_fail
 
     mov ebp, eax
     xor edx, edx
@@ -594,11 +673,12 @@ user_secaudit_read_loop:
     jne user_secaudit_fail
 
     ; -----------------------------------------------------
-    ; Calculate a separate VGA row for this event.
+    ; Display one human-readable audit event per VGA row.
     ;
     ; Event 0 -> row 20
     ; Event 1 -> row 21
     ; Event 2 -> row 22
+    ; ...
     ; -----------------------------------------------------
 
     mov edi, 0xB8C80
@@ -607,50 +687,97 @@ user_secaudit_read_loop:
     imul eax, 160
     add edi, eax
 
-    ; Print:
-    ;
-    ;   EVT=XXXXXXXX PID=XXXXXXXX PRIV=XXXXXXXX
-    ;   OP=XXXXXXXX RES=XXXXXXXX
-    ;
+    ; Event number
     call user_get_pc
     add esi, user_secaudit_event_prefix - user_pc_here
     call user_print_string
 
-    ; Sequence
-    mov eax, [0x007FF100]
-    call user_print_hex32
+    mov eax, edx
+    inc eax
+    call user_print_uint32
 
+    ; PID
     call user_get_pc
     add esi, user_secaudit_pid_prefix - user_pc_here
     call user_print_string
 
-    ; PID
     mov eax, [0x007FF100 + 4]
-    call user_print_hex32
+    call user_print_uint32
 
+    ; Privilege
     call user_get_pc
     add esi, user_secaudit_priv_prefix - user_pc_here
     call user_print_string
 
-    ; Privilege
     mov eax, [0x007FF100 + 8]
-    call user_print_hex32
 
+    cmp eax, 0
+    jne user_print_user_privilege
+
+    call user_get_pc
+    add esi, user_secaudit_kernel_privilege - user_pc_here
+    call user_print_string
+    jmp user_print_operation
+
+
+user_print_user_privilege:
+
+    call user_get_pc
+    add esi, user_secaudit_user_privilege - user_pc_here
+    call user_print_string
+
+
+user_print_operation:
+
+    ; Operation
     call user_get_pc
     add esi, user_secaudit_op_prefix - user_pc_here
     call user_print_string
 
-    ; Operation
     mov eax, [0x007FF100 + 12]
-    call user_print_hex32
 
+    cmp eax, 1
+    jne user_print_unknown_operation
+
+    call user_get_pc
+    add esi, user_secaudit_protected_test - user_pc_here
+    call user_print_string
+    jmp user_print_result
+
+
+user_print_unknown_operation:
+
+    call user_get_pc
+    add esi, user_secaudit_unknown_operation - user_pc_here
+    call user_print_string
+
+
+user_print_result:
+
+    ; Result
     call user_get_pc
     add esi, user_secaudit_result_prefix - user_pc_here
     call user_print_string
 
-    ; Result
     mov eax, [0x007FF100 + 16]
-    call user_print_hex32
+
+    cmp eax, 1
+    jne user_print_denied_result
+
+    call user_get_pc
+    add esi, user_secaudit_allowed - user_pc_here
+    call user_print_string
+    jmp user_secaudit_next
+
+
+user_print_denied_result:
+
+    call user_get_pc
+    add esi, user_secaudit_denied - user_pc_here
+    call user_print_string
+
+
+user_secaudit_next:
 
     inc edx
     jmp user_secaudit_read_loop
@@ -740,37 +867,110 @@ user_print_string_done:
 
 user_print_hex32:
 
+    ; Preserve caller registers.
+    push eax
+    push ebx
+    push ecx
+
+    ; Keep the original value in EBX.
+    mov ebx, eax
+
     mov ecx, 8
 
 user_print_hex32_loop:
 
-    rol eax, 4
+    rol ebx, 4
 
-    mov ebx, eax
-    and ebx, 0x0F
+    mov eax, ebx
+    and eax, 0x0F
 
-    cmp ebx, 10
+    cmp eax, 10
     jb user_print_hex32_digit
 
-    add ebx, 'A' - 10
+    add eax, 'A' - 10
     jmp user_print_hex32_write
-
 
 user_print_hex32_digit:
 
-    add ebx, '0'
-
+    add eax, '0'
 
 user_print_hex32_write:
 
-    mov al, bl
     mov ah, 0x07
     stosw
 
     loop user_print_hex32_loop
 
+    pop ecx
+    pop ebx
+    pop eax
+
     ret
 
+; =========================================================
+; User-space decimal unsigned integer output.
+;
+; Input:
+;   EAX = 32-bit unsigned value
+;   EDI = VGA output address
+;
+; Output:
+;   Decimal representation
+; =========================================================
+
+user_print_uint32:
+
+    push ebx
+    push ecx
+    push edx
+
+    test eax, eax
+    jnz user_print_uint32_convert
+
+    mov al, '0'
+    mov ah, 0x07
+    stosw
+    jmp user_print_uint32_done
+
+
+user_print_uint32_convert:
+
+    xor ecx, ecx
+    mov ebx, 10
+
+
+user_print_uint32_divide:
+
+    xor edx, edx
+    div ebx
+
+    add dl, '0'
+
+    push edx
+    inc ecx
+
+    test eax, eax
+    jnz user_print_uint32_divide
+
+
+user_print_uint32_write:
+
+    pop edx
+
+    mov al, dl
+    mov ah, 0x07
+    stosw
+
+    loop user_print_uint32_write
+
+
+user_print_uint32_done:
+
+    pop edx
+    pop ecx
+    pop ebx
+
+    ret
 
 ; =========================================================
 ; secaudit strings
@@ -780,22 +980,39 @@ user_secaudit_banner db \
     'SECAUDIT -- RECENT SECURITY EVENTS', 0
 
 user_secaudit_event_prefix db \
-    'EVT=', 0
+    'Event ', 0
 
 user_secaudit_pid_prefix db \
-    ' PID=', 0
+    ' | PID ', 0
 
 user_secaudit_priv_prefix db \
-    ' PRIV=', 0
+    ' | ', 0
+
+user_secaudit_kernel_privilege db \
+    'KERNEL (Ring 0)', 0
+
+user_secaudit_user_privilege db \
+    'USER (Ring 3)', 0
 
 user_secaudit_op_prefix db \
-    ' OP=', 0
+    ' | ', 0
+
+user_secaudit_protected_test db \
+    'Protected Test', 0
+
+user_secaudit_unknown_operation db \
+    'Unknown Operation', 0
 
 user_secaudit_result_prefix db \
-    ' RES=', 0
+    ' | ', 0
 
+user_secaudit_allowed db \
+    'ALLOWED', 0
 
-user_mode_code_end:
+user_secaudit_denied db \
+    'DENIED', 0
+
+user_secaudit_code_end:
 
 ; =========================================================
 ; task_switch

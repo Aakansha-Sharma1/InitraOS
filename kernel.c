@@ -29,6 +29,8 @@ extern void enter_user_mode(
 extern void user_mode_entry(void);
 extern unsigned char user_mode_code_start[];
 extern unsigned char user_mode_code_end[];
+extern unsigned char user_secaudit_code_start[];
+extern unsigned char user_secaudit_code_end[];
 extern void enable_long_mode(void);
 
 static void paging_init(void);
@@ -1310,7 +1312,7 @@ extern void task_switch(
 );
 
 extern void scheduler_tick(void);
-
+extern unsigned char kernel_autoboot_mode;
 static unsigned int next_task_id = 1;
 
 static task_t *current_task = 0;
@@ -2797,6 +2799,51 @@ static int user_space_prepare(
     return 1;
 }
 
+static int user_secaudit_prepare(
+    unsigned int *entry_point
+)
+{
+    unsigned int image_start =
+        (unsigned int)user_secaudit_code_start;
+
+    unsigned int image_end =
+        (unsigned int)user_secaudit_code_end;
+
+    unsigned int image_size =
+        image_end - image_start;
+
+    if (entry_point == 0 ||
+        image_size == 0)
+    {
+        return 0;
+    }
+
+    if (!user_program_load(
+            (const unsigned char *)image_start,
+            image_size,
+            entry_point))
+    {
+        return 0;
+    }
+
+    /*
+     * Clear the complete user stack before launching
+     * the security utility.
+     */
+    volatile unsigned char *user_stack =
+        (volatile unsigned char *)
+        user_stack_region.base;
+
+    for (unsigned int i = 0;
+         i < user_stack_region.size;
+         i++)
+    {
+        user_stack[i] = 0;
+    }
+
+    return 1;
+}
+
 /* ---------- Kernel Task Creation ---------- */
 
 static task_t *task_create(void)
@@ -3400,6 +3447,15 @@ static int keyboard_row = 13;
 
 static int shift_pressed = 0;
 
+/*
+ * Set by the keyboard-driven shell when a user-space
+ * security utility needs to be launched.
+ *
+ * The actual task switch happens from the kernel main loop,
+ * not directly inside the keyboard interrupt handler.
+ */
+static volatile int shell_secaudit_requested = 0;
+
 
 /* ---------- VGA Output ---------- */
 
@@ -3484,6 +3540,141 @@ static void shell_prompt(void)
 
 
 /* ---------- Shell ---------- */
+
+static void shell_run_secaudit(void)
+{
+    unsigned int user_entry_point = 0;
+    task_t *user_task = 0;
+
+    /*
+     * Reload the current native user image.
+     */
+    if (!user_secaudit_prepare(
+        &user_entry_point
+    ))
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secaudit: user image prepare failed"
+        );
+
+        goto shell_secaudit_done;
+    }
+
+    /*
+     * Create a fresh Ring 3 task for the command.
+     */
+    user_task =
+        task_create_user(
+            0,
+            user_entry_point
+        );
+
+    if (user_task == 0 ||
+        user_task->context == 0)
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secaudit: user task create failed"
+        );
+
+        goto shell_secaudit_done;
+    }
+
+    task_set_state(
+        user_task,
+        TASK_READY
+    );
+
+    current_task =
+        user_task;
+
+    task_set_state(
+        user_task,
+        TASK_RUNNING
+    );
+
+    /*
+     * Save the current kernel-shell execution context
+     * and enter the Ring 3 user program.
+     *
+     * SYSCALL_EXIT returns through kernel_context.
+     */
+    task_switch(
+        &kernel_context,
+        user_task->context
+    );
+
+    /*
+     * Returning here means the user program exited.
+     */
+    if (user_task->state ==
+            TASK_FINISHED &&
+        current_task ==
+            user_task)
+    {
+        if (*(volatile unsigned int *)
+                (USER_STACK_BASE + 0x180U) ==
+            0x53454341U)
+        {
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secaudit: audit read completed"
+            );
+        }
+        else
+        {
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secaudit: audit read failed"
+            );
+        }
+    }
+    else
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secaudit: user task exit failed"
+        );
+    }
+
+    /*
+     * We are no longer executing inside the user task.
+     * Clear current_task before destroying it because
+     * task_destroy() refuses to destroy the active task.
+     */
+    current_task = 0;
+
+    task_destroy(
+        user_task
+    );
+
+shell_secaudit_done:
+
+    keyboard_index = 0;
+
+    if (keyboard_row >= 25)
+    {
+        keyboard_row = 13;
+    }
+
+    shell_prompt();
+}
 
 static void shell_execute(void)
 {
@@ -3572,6 +3763,15 @@ static void shell_execute(void)
         );
 
         keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secaudit"
+        );
+
+        keyboard_row++;
+
     }
     else if (command_equals("about"))
     {
@@ -3585,6 +3785,21 @@ static void shell_execute(void)
 
         keyboard_row++;
     }
+
+    else if (command_equals("secaudit"))
+{
+    /*
+     * Do not launch the user task from the keyboard IRQ.
+     * Request it and let the kernel shell loop perform
+     * the context switch safely.
+     */
+    shell_secaudit_requested = 1;
+
+    keyboard_index = 0;
+
+    return;
+}
+
     else if (keyboard_index > 0)
     {
         keyboard_row++;
@@ -6458,27 +6673,6 @@ static void security_syscall_test(
     c_serial_print(
         "[InitraOS] SECURITY_SYSCALL_DENIED_OK\n"
     );
-
-    /*
-     * Verify that the real Ring 3 security utility
-     * successfully read all audit events.
-     *
-     * The user program writes this completion value only
-     * after all three audit records were read successfully.
-     */
-    if (*(volatile unsigned int *)(USER_STACK_BASE + 0x180U) !=
-        0x53454341U)
-    {
-        c_serial_print(
-            "[InitraOS] SECURITY_USER_AUDIT_FAIL\n"
-        );
-
-        return;
-    }
-
-    c_serial_print(
-        "[InitraOS] SECURITY_USER_AUDIT_OK\n"
-    );
 }
 
 /* ---------- Kernel Main ---------- */
@@ -6512,8 +6706,9 @@ void kernel_main(void)
     /*
      * Create the first kernel task.
      */
-    current_task =
-        task_create();
+
+current_task =
+    task_create();
 
     if (current_task == 0)
     {
@@ -6521,8 +6716,8 @@ void kernel_main(void)
         return;
     }
 
-    task_t *next_task =
-        task_schedule_next();
+task_t *next_task =
+    task_schedule_next();
 
     if (next_task != 0)
     {
@@ -6759,16 +6954,54 @@ void kernel_main(void)
         }
     }
 
-    enable_long_mode();
+        /*
+     * CI/autoboot keeps the existing 64-bit validation path.
+     *
+     * Interactive boots stop here and enter the native
+     * 32-bit kernel shell so user-space utilities can be
+     * launched from commands.
+     */
+    if (kernel_autoboot_mode != 0)
+    {
+        enable_long_mode();
 
-    print_at(
-        13,
-        0,
-        "PAGING ENABLED: PROCESS SPACE PROTECTED"
-    );
+        print_at(
+            13,
+            0,
+            "PAGING ENABLED: PROCESS SPACE PROTECTED"
+        );
+
+        while (1)
+        {
+            __asm__ volatile ("hlt");
+        }
+    }
+
+    /*
+     * The initial Ring 3 validation task is finished.
+     * The interactive shell itself is not a task.
+     */
+    current_task = 0;
+
+    keyboard_index = 0;
+    keyboard_row = 13;
+
+    shell_prompt();
+
+    /*
+     * Enable keyboard interrupts for the interactive shell.
+     */
+    __asm__ volatile ("sti");
 
     while (1)
     {
+        if (shell_secaudit_requested)
+        {
+            shell_secaudit_requested = 0;
+
+            shell_run_secaudit();
+        }
+
         __asm__ volatile ("hlt");
     }
 }
