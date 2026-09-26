@@ -2676,6 +2676,12 @@ static int initrafs_vfs_rmdir(
 )
 {
     initrafs_instance_t *instance;
+    struct fs_inode *inode;
+    initrafs_namespace_node_t *node;
+    initrafs_namespace_node_t *parent_node;
+    inode_number_t parent_inode;
+    unsigned int caller_uid;
+    unsigned int caller_gid;
 
     if (filesystem == 0 ||
         path == 0)
@@ -2690,6 +2696,85 @@ static int initrafs_vfs_rmdir(
 
     if (instance == 0 ||
         instance->mounted == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Resolve the directory first.
+     */
+    if (!initrafs_vfs_lookup(
+            filesystem,
+            path,
+            &inode))
+    {
+        return 0;
+    }
+
+    /*
+     * The filesystem root is never removable.
+     */
+    if (inode->inode_number ==
+        instance->namespace.root_inode)
+    {
+        return 0;
+    }
+
+    node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            inode->inode_number
+        );
+
+    if (node == 0 ||
+        node->inode != inode ||
+        node->disk_inode == 0 ||
+        node->entries == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Find the parent directory.
+     */
+    if (!initrafs_directory_lookup(
+            node->entries,
+            node->entry_count,
+            "..",
+            &parent_inode))
+    {
+        return 0;
+    }
+
+    parent_node =
+        initrafs_namespace_find(
+            &instance->namespace,
+            parent_inode
+        );
+
+    if (parent_node == 0 ||
+        parent_node->inode == 0 ||
+        parent_node->disk_inode == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Removing a directory requires WRITE + EXECUTE
+     * permission on its parent directory.
+     */
+    vfs_get_caller_identity(
+        &caller_uid,
+        &caller_gid
+    );
+
+    if (!initrafs_inode_check_permission(
+            parent_node->inode,
+            caller_uid,
+            caller_gid,
+            INITRAFS_PERMISSION_WRITE |
+            INITRAFS_PERMISSION_EXECUTE
+        ))
     {
         return 0;
     }

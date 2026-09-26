@@ -6611,7 +6611,44 @@ static void initrafs_vfs_rmdir_test(void)
     }
 
     /*
-     * Remove the empty directory through VFS.
+     * A normal user must not remove a directory from
+     * the root directory because root is 0755.
+     */
+    if (!vfs_set_caller_identity(
+            1000U,
+            1000U
+        ))
+    {
+        goto fail;
+    }
+
+    if (vfs_rmdir("/docs") != 0)
+    {
+        goto fail;
+    }
+
+    /*
+     * The denied operation must leave the directory intact.
+     */
+    if (!initrafs_path_lookup(
+            &instance.namespace,
+            "/docs",
+            &inode_number))
+    {
+        goto fail;
+    }
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_RMDIR_PERMISSION_OK\n"
+    );
+
+    /*
+     * Kernel/root identity may remove the directory.
      */
     if (!vfs_rmdir("/docs"))
     {
@@ -6659,6 +6696,11 @@ static void initrafs_vfs_rmdir_test(void)
     return;
 
 fail:
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
 
     if (mounted)
     {
