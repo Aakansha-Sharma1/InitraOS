@@ -31,6 +31,8 @@ extern unsigned char user_mode_code_start[];
 extern unsigned char user_mode_code_end[];
 extern unsigned char user_secaudit_code_start[];
 extern unsigned char user_secaudit_code_end[];
+extern unsigned char user_secinfo_code_start[];
+extern unsigned char user_secinfo_code_end[];
 extern void enable_long_mode(void);
 
 static void paging_init(void);
@@ -2829,6 +2831,52 @@ static int user_space_prepare(
     return 1;
 }
 
+static int user_secinfo_prepare(
+    unsigned int *entry_point
+)
+{
+    unsigned int image_start =
+        (unsigned int)user_secinfo_code_start;
+
+    unsigned int image_end =
+        (unsigned int)user_secinfo_code_end;
+
+    unsigned int image_size =
+        image_end - image_start;
+
+    if (entry_point == 0 ||
+        image_size == 0)
+    {
+        return 0;
+    }
+
+    if (!user_program_load(
+            (const unsigned char *)image_start,
+            image_size,
+            entry_point
+        ))
+    {
+        return 0;
+    }
+
+    /*
+     * Clear the complete user stack before launching
+     * the security utility.
+     */
+    volatile unsigned char *user_stack =
+        (volatile unsigned char *)
+        user_stack_region.base;
+
+    for (unsigned int i = 0;
+         i < user_stack_region.size;
+         i++)
+    {
+        user_stack[i] = 0;
+    }
+
+    return 1;
+}
+
 static int user_secaudit_prepare(
     unsigned int *entry_point
 )
@@ -3519,6 +3567,7 @@ static int shift_pressed = 0;
  * not directly inside the keyboard interrupt handler.
  */
 static volatile int shell_secaudit_requested = 0;
+static volatile int shell_secinfo_requested = 0;
 
 
 /* ---------- VGA Output ---------- */
@@ -3605,8 +3654,155 @@ static void shell_prompt(void)
 
 /* ---------- Shell ---------- */
 
+static void shell_run_secinfo(void)
+{
+    /*
+     * Each native security utility owns its current
+     * terminal display. Clear previous utility output
+     * before launching a new Ring 3 utility.
+     */
+    clear_screen();
+
+    unsigned int user_entry_point = 0;
+    task_t *user_task = 0;
+
+    if (!user_secinfo_prepare(
+            &user_entry_point
+        ))
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secinfo: user image prepare failed"
+        );
+
+        goto shell_secinfo_done;
+    }
+
+    user_task =
+        task_create_user(
+            0,
+            user_entry_point
+        );
+
+    if (user_task == 0 ||
+        user_task->context == 0)
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secinfo: user task create failed"
+        );
+
+        goto shell_secinfo_done;
+    }
+
+    task_set_state(
+        user_task,
+        TASK_READY
+    );
+
+    current_task =
+        user_task;
+
+    task_set_state(
+        user_task,
+        TASK_RUNNING
+    );
+
+    /*
+     * Enter the Ring 3 secinfo program.
+     */
+    task_switch(
+        &kernel_context,
+        user_task->context
+    );
+
+    /*
+     * Returning here means SYSCALL_EXIT switched
+     * back to the shell's kernel context.
+     */
+    if (user_task->state ==
+            TASK_FINISHED &&
+        current_task ==
+            user_task)
+    {
+        if (*(volatile unsigned int *)
+                (USER_STACK_BASE + 0x1A0U) ==
+            0x53494E46U)
+        {
+            c_serial_print(
+                "[InitraOS] SECINFO_USER_OK\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secinfo: status read completed"
+            );
+        }
+        else
+        {
+            c_serial_print(
+                "[InitraOS] SECINFO_USER_FAIL\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secinfo: status read failed"
+            );
+        }
+    }
+    else
+    {
+        c_serial_print(
+            "[InitraOS] SECINFO_USER_FAIL\n"
+        );
+
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secinfo: user task exit failed"
+        );
+    }
+
+    current_task = 0;
+
+    task_destroy(
+        user_task
+    );
+
+shell_secinfo_done:
+
+    keyboard_index = 0;
+
+    if (keyboard_row >= 25)
+    {
+        keyboard_row = 13;
+    }
+
+    shell_prompt();
+}
+
 static void shell_run_secaudit(void)
 {
+    /*
+     * Prevent output from a previous security utility
+     * from remaining visible underneath this utility.
+     */
+    clear_screen();
+
     unsigned int user_entry_point = 0;
     task_t *user_task = 0;
 
@@ -3836,6 +4032,14 @@ static void shell_execute(void)
 
         keyboard_row++;
 
+        print_at(
+            keyboard_row,
+            0,
+            "secinfo"
+        );
+
+        keyboard_row++;
+
     }
     else if (command_equals("about"))
     {
@@ -3848,6 +4052,15 @@ static void shell_execute(void)
         );
 
         keyboard_row++;
+    }
+
+    else if (command_equals("secinfo"))
+    {
+        shell_secinfo_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
     }
 
     else if (command_equals("secaudit"))
@@ -7535,6 +7748,13 @@ task_t *next_task =
 
     while (1)
     {
+        if (shell_secinfo_requested)
+        {
+            shell_secinfo_requested = 0;
+
+            shell_run_secinfo();
+        }
+
         if (shell_secaudit_requested)
         {
             shell_secaudit_requested = 0;

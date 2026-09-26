@@ -35,6 +35,8 @@ global user_mode_code_start
 global user_mode_code_end
 global user_secaudit_code_start
 global user_secaudit_code_end
+global user_secinfo_code_start
+global user_secinfo_code_end
 global enable_long_mode
 global syscall_entry
 
@@ -563,6 +565,227 @@ user_mode_entry:
 
 
 user_mode_code_end:
+
+; =========================================================
+; Native Ring 3 security status utility.
+;
+;     secinfo
+;
+; The utility queries the kernel-owned security status
+; through SYSCALL_SECURITY_STATUS (9).
+; =========================================================
+
+user_secinfo_code_start:
+
+    ; InitraOS native user program header.
+    dd 0x49504F53
+    dd 1
+    dd 0
+    dd user_secinfo_code_end - user_secinfo_entry
+    dd 0
+    dd 0
+
+user_secinfo_entry:
+
+    ; Command title.
+    mov edi, 0xB8A00
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_banner - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    ; Architecture.
+    mov edi, 0xB8AA0
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_arch - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    ; Query kernel security status.
+    mov eax, 9
+    int 0x80
+
+    ; Unknown syscall failure.
+    cmp eax, 0xFFFFFFFF
+    je user_secinfo_fail
+
+    mov ebp, eax
+
+    ; Kernel protection.
+    mov edi, 0xB8B40
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_kernel - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x01
+    call user_secinfo_print_enabled_disabled
+
+    ; User isolation.
+    mov edi, 0xB8BE0
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_user - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x02
+    call user_secinfo_print_enabled_disabled
+
+    ; Audit subsystem.
+    mov edi, 0xB8C80
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_audit - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x04
+    call user_secinfo_print_enabled_disabled
+
+    ; Filesystem access control.
+    mov edi, 0xB8D20
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_fs_access - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x08
+    call user_secinfo_print_enabled_disabled
+
+    ; Filesystem integrity.
+    mov edi, 0xB8DC0
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_fs_integrity - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x10
+    call user_secinfo_print_enabled_disabled
+
+    ; Protected system objects.
+    mov edi, 0xB8E60
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_system - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    mov eax, ebp
+    and eax, 0x20
+    call user_secinfo_print_enabled_disabled
+
+    ; Network security is a later Stage 6 capability.
+    mov edi, 0xB8F00
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_network - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_not_implemented - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    ; Signal successful Ring 3 execution to the kernel.
+    mov dword [0x007FF1A0], 0x53494E46
+
+    ; Exit through the controlled syscall path.
+    mov eax, 0
+    int 0x80
+
+
+user_secinfo_fail:
+
+    jmp user_secinfo_fail
+
+
+; =========================================================
+; secinfo-local user-space helpers
+; =========================================================
+
+user_secinfo_get_pc:
+
+    call user_secinfo_pc_here
+
+user_secinfo_pc_here:
+
+    pop esi
+    ret
+
+
+user_secinfo_print_string:
+
+user_secinfo_print_string_loop:
+
+    lodsb
+
+    test al, al
+    jz user_secinfo_print_string_done
+
+    mov ah, 0x07
+    stosw
+
+    jmp user_secinfo_print_string_loop
+
+
+user_secinfo_print_string_done:
+
+    ret
+
+
+user_secinfo_print_enabled_disabled:
+
+    test eax, eax
+    jz user_secinfo_print_disabled
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_enabled - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    ret
+
+
+user_secinfo_print_disabled:
+
+    call user_secinfo_get_pc
+    add esi, user_secinfo_disabled - user_secinfo_pc_here
+    call user_secinfo_print_string
+
+    ret
+
+
+; =========================================================
+; secinfo strings
+; =========================================================
+
+user_secinfo_banner db     'SECINFO -- SECURITY STATUS', 0
+
+user_secinfo_arch db     'Architecture      : i386', 0
+
+user_secinfo_kernel db     'Kernel Protection : ', 0
+
+user_secinfo_user db     'User Isolation    : ', 0
+
+user_secinfo_audit db     'Audit Subsystem   : ', 0
+
+user_secinfo_fs_access db     'Filesystem Access : ', 0
+
+user_secinfo_fs_integrity db     'Filesystem Integrity: ', 0
+
+user_secinfo_system db     'System Protection : ', 0
+
+user_secinfo_network db     'Network Security  : ', 0
+
+user_secinfo_enabled db     'ENABLED', 0
+
+user_secinfo_disabled db     'DISABLED', 0
+
+user_secinfo_not_implemented db     'NOT IMPLEMENTED', 0
+
+
+user_secinfo_code_end:
 
 user_secaudit_code_start:
 
