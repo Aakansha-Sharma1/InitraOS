@@ -3570,6 +3570,13 @@ static int shift_pressed = 0;
 static volatile int shell_secaudit_requested = 0;
 static volatile int shell_secinfo_requested = 0;
 
+static volatile unsigned int
+    shell_secaudit_filter_type =
+        SECURITY_AUDIT_FILTER_ALL;
+
+static volatile unsigned int
+    shell_secaudit_filter_value = 0;
+
 
 /* ---------- VGA Output ---------- */
 
@@ -3796,7 +3803,10 @@ shell_secinfo_done:
     shell_prompt();
 }
 
-static void shell_run_secaudit(void)
+static void shell_run_secaudit(
+    unsigned int filter_type,
+    unsigned int filter_value
+)
 {
     /*
      * Prevent output from a previous security utility
@@ -3824,6 +3834,19 @@ static void shell_run_secaudit(void)
 
         goto shell_secaudit_done;
     }
+
+    /*
+     * Pass the selected audit filter to the Ring 3 utility
+     * through reserved words in the user-writable stack.
+     */
+    *(volatile unsigned int *)
+        (USER_STACK_BASE + 0x1C0U) =
+            filter_type;
+
+    *(volatile unsigned int *)
+        (USER_STACK_BASE + 0x1C4U) =
+            filter_value;
+
 
     /*
      * Create a fresh Ring 3 task for the command.
@@ -4064,19 +4087,60 @@ static void shell_execute(void)
         return;
     }
 
+    else if (command_equals("secaudit --denied"))
+    {
+        /*
+         * Request a Ring 3 audit read filtered to denied
+         * security events.
+         */
+        shell_secaudit_filter_type =
+            SECURITY_AUDIT_FILTER_RESULT;
+
+        shell_secaudit_filter_value =
+            SECURITY_DENIED;
+
+        shell_secaudit_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
+    }
+
+    else if (command_equals("secaudit --allowed"))
+    {
+        /*
+         * Request a Ring 3 audit read filtered to allowed
+         * security events.
+         */
+        shell_secaudit_filter_type =
+            SECURITY_AUDIT_FILTER_RESULT;
+
+        shell_secaudit_filter_value =
+            SECURITY_ALLOWED;
+
+        shell_secaudit_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
+    }
+
     else if (command_equals("secaudit"))
-{
-    /*
-     * Do not launch the user task from the keyboard IRQ.
-     * Request it and let the kernel shell loop perform
-     * the context switch safely.
-     */
-    shell_secaudit_requested = 1;
+    {
+        /*
+         * Show all audit events.
+         */
+        shell_secaudit_filter_type =
+            SECURITY_AUDIT_FILTER_ALL;
 
-    keyboard_index = 0;
+        shell_secaudit_filter_value = 0;
 
-    return;
-}
+        shell_secaudit_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
+    }
 
     else if (keyboard_index > 0)
     {
@@ -7895,7 +7959,10 @@ task_t *next_task =
         {
             shell_secaudit_requested = 0;
 
-            shell_run_secaudit();
+            shell_run_secaudit(
+                shell_secaudit_filter_type,
+                shell_secaudit_filter_value
+            );
         }
 
         __asm__ volatile ("hlt");

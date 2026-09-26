@@ -880,15 +880,18 @@ user_secaudit_read_loop:
     jae user_secaudit_done
 
     ; -----------------------------------------------------
-    ; Read one audit event.
+    ; Read one filtered audit event.
     ;
-    ; EBX = event index
-    ; ECX = user-writable destination
+    ; EBX = audit filter type
+    ; ECX = audit filter value
+    ; EDX = matching event index
+    ; ESI = user-writable destination
     ; -----------------------------------------------------
 
-    mov eax, 8
-    mov ebx, edx
-    mov ecx, 0x007FF100
+    mov ebx, [0x007FF1C0]
+    mov ecx, [0x007FF1C4]
+    mov esi, 0x007FF100
+    mov eax, 10
     int 0x80
 
     ; SECURITY_ALLOWED = 1.
@@ -1010,7 +1013,7 @@ user_secaudit_done:
 
     ; -----------------------------------------------------
     ; Tell the kernel that the real Ring 3 audit reader
-    ; successfully completed all three audit reads.
+    ; successfully completed all requested filtered audit reads.
     ;
     ; This location is inside the existing user-writable
     ; stack page but away from the normal stack top.
