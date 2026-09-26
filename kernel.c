@@ -6182,6 +6182,25 @@ static void initrafs_vfs_test(void)
     {
         goto fail;
     }
+    /*
+     * Give the test file a real owner and group.
+     */
+    file_inode.owner = 1000U;
+    file_inode.group = 2000U;
+
+    disk_inode.owner = 1000U;
+    disk_inode.group = 2000U;
+
+    /*
+     * The owner is allowed to read and write.
+     */
+    if (!vfs_set_caller_identity(
+            1000U,
+            1000U
+        ))
+    {
+        goto fail;
+    }
 
     /*
      * Open the real InitraFS file through the
@@ -6240,6 +6259,87 @@ static void initrafs_vfs_test(void)
         }
     }
 
+    /*
+     * A group member may read because the file is 0644.
+     * The same group member must not write.
+     */
+    if (!vfs_set_caller_identity(
+            3000U,
+            2000U
+        ))
+    {
+        goto fail;
+    }
+
+    if (!vfs_seek(
+            file,
+            0U))
+    {
+        goto fail;
+    }
+
+    if (vfs_read(
+            file,
+            read_data,
+            sizeof(read_data)) !=
+        (int)sizeof(read_data))
+    {
+        goto fail;
+    }
+
+    if (vfs_write(
+            file,
+            write_data,
+            sizeof(write_data)) != -1)
+    {
+        goto fail;
+    }
+
+    /*
+     * An unrelated user gets "other" permissions.
+     * Read is allowed by 0644; write is denied.
+     */
+    if (!vfs_set_caller_identity(
+            4000U,
+            4000U
+        ))
+    {
+        goto fail;
+    }
+
+    if (!vfs_seek(
+            file,
+            0U))
+    {
+        goto fail;
+    }
+
+    if (vfs_read(
+            file,
+            read_data,
+            sizeof(read_data)) !=
+        (int)sizeof(read_data))
+    {
+        goto fail;
+    }
+
+    if (vfs_write(
+            file,
+            write_data,
+            sizeof(write_data)) != -1)
+    {
+        goto fail;
+    }
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
+
+    c_serial_print(
+        "[InitraOS] INITRAFS_PERMISSION_ENFORCEMENT_OK\n"
+    );
+
     if (!vfs_close(file))
     {
         file = 0;
@@ -6272,6 +6372,11 @@ static void initrafs_vfs_test(void)
     return;
 
 fail:
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
 
     if (file != 0)
     {

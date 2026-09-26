@@ -2472,6 +2472,8 @@ static int initrafs_vfs_read(
 {
     initrafs_instance_t *instance;
     initrafs_namespace_node_t *node;
+    unsigned int caller_uid;
+    unsigned int caller_gid;
 
     instance =
         initrafs_vfs_instance(
@@ -2495,6 +2497,21 @@ static int initrafs_vfs_read(
     if (node == 0 ||
         node->inode != inode ||
         node->disk_inode == 0)
+    {
+        return -1;
+    }
+
+    vfs_get_caller_identity(
+        &caller_uid,
+        &caller_gid
+    );
+
+    if (!initrafs_inode_check_permission(
+            node->inode,
+            caller_uid,
+            caller_gid,
+            INITRAFS_PERMISSION_READ
+        ))
     {
         return -1;
     }
@@ -2520,6 +2537,8 @@ static int initrafs_vfs_write(
 {
     initrafs_instance_t *instance;
     initrafs_namespace_node_t *node;
+    unsigned int caller_uid;
+    unsigned int caller_gid;
 
     instance =
         initrafs_vfs_instance(
@@ -2543,6 +2562,21 @@ static int initrafs_vfs_write(
     if (node == 0 ||
         node->inode != inode ||
         node->disk_inode == 0)
+    {
+        return -1;
+    }
+
+    vfs_get_caller_identity(
+        &caller_uid,
+        &caller_gid
+    );
+
+    if (!initrafs_inode_check_permission(
+            node->inode,
+            caller_uid,
+            caller_gid,
+            INITRAFS_PERMISSION_WRITE
+        ))
     {
         return -1;
     }
