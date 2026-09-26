@@ -3988,6 +3988,8 @@ static void initrafs_root_test(void)
             INITRAFS_TYPE_DIRECTORY ||
         root_inode.mode !=
             INITRAFS_ROOT_MODE ||
+        root_inode.flags !=
+            INITRAFS_INODE_FLAG_SYSTEM_PROTECTED ||
         root_inode.link_count !=
             INITRAFS_ROOT_LINK_COUNT ||
         root_inode.direct_blocks[0] !=
@@ -4035,6 +4037,9 @@ static void initrafs_root_test(void)
         );
         return;
     }
+    c_serial_print(
+        "[InitraOS] INITRAFS_SYSTEM_PROTECTION_OK\n"
+    );
 
     c_serial_print(
         "[InitraOS] INITRAFS_ROOT_OK\n"

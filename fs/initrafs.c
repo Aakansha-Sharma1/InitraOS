@@ -182,6 +182,9 @@ int initrafs_root_inode_init(
     inode->mode =
         INITRAFS_ROOT_MODE;
 
+    inode->flags =
+    INITRAFS_INODE_FLAG_SYSTEM_PROTECTED;
+
     inode->size =
         INITRAFS_ROOT_DIR_ENTRIES *
         sizeof(initrafs_disk_dirent_t);
@@ -2291,6 +2294,9 @@ int initrafs_instance_init(
     instance->root_inode.size =
         instance->root_disk_inode.size;
 
+    instance->root_inode.flags =
+        instance->root_disk_inode.flags;
+
     instance->root_inode.link_count =
         instance->root_disk_inode.link_count;
 
@@ -2711,14 +2717,15 @@ static int initrafs_vfs_rmdir(
         return 0;
     }
 
-    /*
-     * The filesystem root is never removable.
-     */
-    if (inode->inode_number ==
-        instance->namespace.root_inode)
-    {
-        return 0;
-    }
+       /*
+        * System-protected filesystem objects are never
+        * removable through normal filesystem operations.
+        */
+       if ((inode->flags &
+            INITRAFS_INODE_FLAG_SYSTEM_PROTECTED) != 0)
+       {
+            return 0;
+       }
 
     node =
         initrafs_namespace_find(

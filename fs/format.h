@@ -56,6 +56,14 @@
 #define INITRAFS_FLAG_READONLY  0x00000002U
 
 /*
+ * Inode flags.
+ *
+ * System-protected objects cannot be removed through
+ * normal filesystem operations.
+ */
+#define INITRAFS_INODE_FLAG_SYSTEM_PROTECTED 0x00000001U
+
+/*
  * On-disk superblock.
  *
  * No pointers are stored here.

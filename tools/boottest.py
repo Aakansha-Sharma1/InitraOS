@@ -82,6 +82,7 @@ EXPECTED = [
     "[InitraOS] HEAP_PAGING_OK",
     "[InitraOS] HEAP_DYNAMIC_OK",
     "[InitraOS] INITRAFS_SUPERBLOCK_OK",
+    "[InitraOS] INITRAFS_SYSTEM_PROTECTION_OK",
     "[InitraOS] INITRAFS_ROOT_OK",
     "[InitraOS] INITRAFS_BLOCK_OK",
     "[InitraOS] INITRAFS_INODE_OK",
