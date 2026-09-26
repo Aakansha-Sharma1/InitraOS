@@ -25,6 +25,13 @@
 #define SECURITY_OPERATION_RESOURCE_ACCESS 2U
 
 /*
+ * Audit event filter types.
+ */
+#define SECURITY_AUDIT_FILTER_ALL       0U
+#define SECURITY_AUDIT_FILTER_RESULT    1U
+#define SECURITY_AUDIT_FILTER_OPERATION 2U
+
+/*
  * Security capability/status bits exposed to native
  * security utilities through the kernel API.
  */
@@ -105,5 +112,19 @@ int security_audit_get(
  * Return the currently implemented security capability mask.
  */
 unsigned int security_status(void);
+
+/*
+ * Read the index-th audit event matching a filter.
+ *
+ * Returns:
+ *   1 = matching event returned
+ *   0 = invalid filter, index, or output pointer
+ */
+int security_audit_get_filtered(
+    unsigned int filter_type,
+    unsigned int filter_value,
+    unsigned int index,
+    security_audit_event_t *event
+);
 
 #endif

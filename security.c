@@ -190,6 +190,58 @@ unsigned int security_status(void)
         SECURITY_STATUS_SYSTEM_PROTECTION;
 }
 
+int security_audit_get_filtered(
+    unsigned int filter_type,
+    unsigned int filter_value,
+    unsigned int index,
+    security_audit_event_t *event
+)
+{
+    unsigned int position;
+    unsigned int matched = 0;
+
+    if (event == 0 ||
+        filter_type > SECURITY_AUDIT_FILTER_OPERATION)
+    {
+        return 0;
+    }
+
+    for (unsigned int offset = 0;
+         offset < audit_count;
+         offset++)
+    {
+        position =
+            (audit_head + offset) %
+            SECURITY_MAX_AUDIT_EVENTS;
+
+        if (filter_type == SECURITY_AUDIT_FILTER_RESULT &&
+            audit_events[position].result !=
+                filter_value)
+        {
+            continue;
+        }
+
+        if (filter_type == SECURITY_AUDIT_FILTER_OPERATION &&
+            audit_events[position].operation !=
+                filter_value)
+        {
+            continue;
+        }
+
+        if (matched == index)
+        {
+            *event =
+                audit_events[position];
+
+            return 1;
+        }
+
+        matched++;
+    }
+
+    return 0;
+}
+
 int security_audit_get(
     unsigned int index,
     security_audit_event_t *event

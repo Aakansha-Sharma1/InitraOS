@@ -73,6 +73,7 @@ static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
 static void security_core_test(void);
 static void security_audit_syscall_test(void);
+static void security_audit_filter_api_test(void);
 static void security_status_api_test(void);
 static void security_resource_access_test(void);
 
@@ -7098,6 +7099,140 @@ static void security_core_test(void)
     );
 }
 
+static void security_audit_filter_api_test(void)
+{
+    security_audit_event_t event;
+
+    /*
+     * Event 0 from security_core_test() is the denied
+     * user authorization decision.
+     */
+    if (!security_audit_get_filtered(
+            SECURITY_AUDIT_FILTER_RESULT,
+            SECURITY_DENIED,
+            0U,
+            &event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_RESULT\n"
+        );
+
+        return;
+    }
+
+    if (event.pid != 100U ||
+        event.result != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_EVENT\n"
+        );
+
+        return;
+    }
+
+    /*
+     * The first allowed protected-operation event belongs
+     * to the kernel test with PID 101.
+     */
+    if (!security_audit_get_filtered(
+            SECURITY_AUDIT_FILTER_RESULT,
+            SECURITY_ALLOWED,
+            0U,
+            &event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_ALLOWED\n"
+        );
+
+        return;
+    }
+
+    if (event.pid != 101U ||
+        event.result != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_ALLOWED_EVENT\n"
+        );
+
+        return;
+    }
+
+    /*
+     * No second allowed event exists yet.
+     */
+    if (security_audit_get_filtered(
+            SECURITY_AUDIT_FILTER_RESULT,
+            SECURITY_ALLOWED,
+            1U,
+            &event
+        ))
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_INDEX\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Verify the syscall path also applies the filter and
+     * validates the user destination.
+     */
+    security_audit_event_t *destination =
+        (security_audit_event_t *)USER_STACK_BASE;
+
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_AUDIT_FILTER_READ,
+            SECURITY_AUDIT_FILTER_RESULT,
+            SECURITY_DENIED,
+            0U,
+            (unsigned int)destination,
+            0U
+        ) != SECURITY_ALLOWED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_SYSCALL\n"
+        );
+
+        return;
+    }
+
+    if (destination->pid != 100U ||
+        destination->result != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_COPY\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Kernel code is not a valid user-writable destination.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_AUDIT_FILTER_READ,
+            SECURITY_AUDIT_FILTER_RESULT,
+            SECURITY_DENIED,
+            0U,
+            USER_CODE_BASE,
+            0U
+        ) != SECURITY_DENIED)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_AUDIT_FILTER_FAIL_POINTER\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_AUDIT_FILTER_API_OK\n"
+    );
+}
+
 static void security_status_api_test(void)
 {
     unsigned int status =
@@ -7607,6 +7742,7 @@ task_t *next_task =
     syscall_memory_test();
     security_core_test();
     security_audit_syscall_test();
+    security_audit_filter_api_test();
     security_status_api_test();
     user_region_test();
     user_stack_test();
@@ -8068,6 +8204,38 @@ case SYSCALL_GETPID:
 
             if (!security_audit_get(
                     arg1,
+                    destination
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            return SECURITY_ALLOWED;
+        }
+
+        case SYSCALL_SECURITY_AUDIT_FILTER_READ:
+        {
+            security_audit_event_t *destination =
+                (security_audit_event_t *)arg4;
+
+            /*
+             * EBX / arg1 = filter type
+             * ECX / arg2 = filter value
+             * EDX / arg3 = matching event index
+             * ESI / arg4 = user-space destination
+             */
+            if (!security_user_buffer_valid(
+                    arg4,
+                    sizeof(security_audit_event_t)
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            if (!security_audit_get_filtered(
+                    arg1,
+                    arg2,
+                    arg3,
                     destination
                 ))
             {
