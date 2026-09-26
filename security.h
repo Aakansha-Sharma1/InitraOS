@@ -24,6 +24,19 @@
 #define SECURITY_OPERATION_PROTECTED_TEST 1U
 #define SECURITY_OPERATION_RESOURCE_ACCESS 2U
 
+/*
+ * Security capability/status bits exposed to native
+ * security utilities through the kernel API.
+ */
+#define SECURITY_STATUS_KERNEL_PROTECTION     0x01U
+#define SECURITY_STATUS_USER_ISOLATION        0x02U
+#define SECURITY_STATUS_AUDIT_SUBSYSTEM       0x04U
+#define SECURITY_STATUS_FILESYSTEM_ACCESS     0x08U
+#define SECURITY_STATUS_FILESYSTEM_INTEGRITY  0x10U
+#define SECURITY_STATUS_SYSTEM_PROTECTION     0x20U
+
+#define SECURITY_STATUS_MASK                  0x3FU
+
 typedef struct security_audit_event
 {
     unsigned int sequence;
@@ -87,5 +100,10 @@ int security_audit_get(
     unsigned int index,
     security_audit_event_t *event
 );
+
+/*
+ * Return the currently implemented security capability mask.
+ */
+unsigned int security_status(void);
 
 #endif

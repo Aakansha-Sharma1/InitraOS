@@ -173,6 +173,23 @@ unsigned int security_audit_count(void)
     return audit_count;
 }
 
+unsigned int security_status(void)
+{
+    /*
+     * These capabilities are implemented by the current
+     * 32-bit security architecture. Network security is
+     * intentionally not represented here and belongs to
+     * the later network-security stage.
+     */
+    return
+        SECURITY_STATUS_KERNEL_PROTECTION |
+        SECURITY_STATUS_USER_ISOLATION |
+        SECURITY_STATUS_AUDIT_SUBSYSTEM |
+        SECURITY_STATUS_FILESYSTEM_ACCESS |
+        SECURITY_STATUS_FILESYSTEM_INTEGRITY |
+        SECURITY_STATUS_SYSTEM_PROTECTION;
+}
+
 int security_audit_get(
     unsigned int index,
     security_audit_event_t *event

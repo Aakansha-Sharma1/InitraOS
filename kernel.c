@@ -71,6 +71,7 @@ static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
 static void security_core_test(void);
 static void security_audit_syscall_test(void);
+static void security_status_api_test(void);
 static void security_resource_access_test(void);
 
 
@@ -6884,6 +6885,33 @@ static void security_core_test(void)
     );
 }
 
+static void security_status_api_test(void)
+{
+    unsigned int status =
+        syscall_dispatcher(
+            SYSCALL_SECURITY_STATUS,
+            0,
+            0,
+            0,
+            0,
+            0
+        );
+
+    if ((status & SECURITY_STATUS_MASK) !=
+        SECURITY_STATUS_MASK)
+    {
+        c_serial_print(
+            "[InitraOS] SECURITY_STATUS_API_FAIL\n"
+        );
+
+        return;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_STATUS_API_OK\n"
+    );
+}
+
 static void security_resource_access_test(void)
 {
     /*
@@ -7366,6 +7394,7 @@ task_t *next_task =
     syscall_memory_test();
     security_core_test();
     security_audit_syscall_test();
+    security_status_api_test();
     user_region_test();
     user_stack_test();
     frame_paging_test();
@@ -7827,6 +7856,13 @@ case SYSCALL_GETPID:
 
             return SECURITY_ALLOWED;
         }
+
+        case SYSCALL_SECURITY_STATUS:
+            /*
+             * Security status is read-only information.
+             * The kernel owns the authoritative capability mask.
+             */
+            return security_status();
 
         default:
             /*
