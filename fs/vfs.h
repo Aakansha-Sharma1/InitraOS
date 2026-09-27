@@ -127,6 +127,27 @@ void vfs_get_caller_identity(
 );
 
 /*
+ * Read security-relevant metadata for a filesystem object.
+ *
+ * This is read-only. Permission/ownership changes will use
+ * a separate controlled interface.
+ */
+typedef struct vfs_security_info
+{
+    inode_number_t inode_number;
+    unsigned int type;
+    unsigned int mode;
+    unsigned int owner;
+    unsigned int group;
+    unsigned int flags;
+} vfs_security_info_t;
+
+int vfs_get_security_info(
+    const char *path,
+    vfs_security_info_t *info
+);
+
+/*
  * File operations.
  */
 

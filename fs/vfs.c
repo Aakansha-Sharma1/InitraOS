@@ -868,6 +868,55 @@ int vfs_self_test(void)
         );
     }
 
+    int vfs_get_security_info(
+    const char *path,
+    vfs_security_info_t *info
+)
+{
+    struct fs_inode *inode = 0;
+
+    if (vfs_active_filesystem == 0 ||
+        vfs_active_filesystem->lookup == 0 ||
+        path == 0 ||
+        info == 0)
+    {
+        return 0;
+    }
+
+    if (!vfs_active_filesystem->lookup(
+            vfs_active_filesystem,
+            path,
+            &inode) ||
+        inode == 0)
+    {
+        return 0;
+    }
+
+    /*
+     * Return only security-relevant inode metadata.
+     * Do not expose filesystem-private state.
+     */
+    info->inode_number =
+        inode->inode_number;
+
+    info->type =
+        inode->type;
+
+    info->mode =
+        inode->mode;
+
+    info->owner =
+        inode->owner;
+
+    info->group =
+        inode->group;
+
+    info->flags =
+        inode->flags;
+
+    return 1;
+}
+
     vfs_test_inode.inode_number = 2U;
     vfs_test_inode.type = INODE_TYPE_FILE;
     vfs_test_inode.mode = 0644U;
