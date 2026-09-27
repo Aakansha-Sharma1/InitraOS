@@ -37,6 +37,8 @@ global user_secaudit_code_start
 global user_secaudit_code_end
 global user_secinfo_code_start
 global user_secinfo_code_end
+global user_secperm_code_start
+global user_secperm_code_end
 global enable_long_mode
 global syscall_entry
 
@@ -786,6 +788,278 @@ user_secinfo_not_implemented db     'NOT IMPLEMENTED', 0
 
 
 user_secinfo_code_end:
+
+; =========================================================
+; Native Ring 3 filesystem security utility.
+;
+;     secperm
+;
+; First increment:
+;   Query security metadata for the filesystem root "/".
+;
+; The utility accesses the filesystem only through
+; SYSCALL_SECURITY_FS_INFO (11).
+; =========================================================
+
+user_secperm_code_start:
+
+    ; InitraOS native user program header.
+    dd 0x49504F53
+    dd 1
+    dd 0
+    dd user_secperm_code_end - user_secperm_entry
+    dd 0
+    dd 0
+
+user_secperm_entry:
+
+    ; -----------------------------------------------------
+    ; Prepare the pathname in the user-writable stack.
+    ;
+    ; The first secperm increment queries the filesystem
+    ; root directory.
+    ; -----------------------------------------------------
+
+    mov byte [0x007FF200], '/'
+    mov byte [0x007FF201], 0
+
+    ; -----------------------------------------------------
+    ; Ask the kernel for security-relevant inode metadata.
+    ;
+    ; EBX = user pathname
+    ; ECX = user metadata destination
+    ; EAX = SYSCALL_SECURITY_FS_INFO (11)
+    ; -----------------------------------------------------
+
+    mov ebx, 0x007FF200
+    mov ecx, 0x007FF100
+    mov eax, 11
+    int 0x80
+
+    cmp eax, 1
+    jne user_secperm_fail
+
+    ; -----------------------------------------------------
+    ; Display title.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8A00
+
+    call user_secperm_get_pc
+    add esi, user_secperm_banner - user_secperm_pc_here
+    call user_secperm_print_string
+
+    ; -----------------------------------------------------
+    ; Inode number.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8AA0
+
+    call user_secperm_get_pc
+    add esi, user_secperm_inode - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF100]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Object type.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8B40
+
+    call user_secperm_get_pc
+    add esi, user_secperm_type - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF104]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Permission mode.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8BE0
+
+    call user_secperm_get_pc
+    add esi, user_secperm_mode - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF108]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Owner UID.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8C80
+
+    call user_secperm_get_pc
+    add esi, user_secperm_owner - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF10C]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Group GID.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8D20
+
+    call user_secperm_get_pc
+    add esi, user_secperm_group - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF110]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Inode flags.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8DC0
+
+    call user_secperm_get_pc
+    add esi, user_secperm_flags - user_secperm_pc_here
+    call user_secperm_print_string
+
+    mov eax, [0x007FF114]
+    call user_secperm_print_uint32
+
+    ; -----------------------------------------------------
+    ; Signal successful Ring 3 execution to the kernel.
+    ; -----------------------------------------------------
+
+    mov dword [0x007FF1A4], 0x5343504D
+
+    ; Exit through the controlled syscall path.
+    mov eax, 0
+    int 0x80
+
+
+user_secperm_fail:
+
+    jmp user_secperm_fail
+
+
+; =========================================================
+; secperm strings
+; =========================================================
+
+user_secperm_banner db \
+    'SECPERM -- FILE SECURITY', 0
+
+user_secperm_inode db \
+    'Inode  : ', 0
+
+user_secperm_type db \
+    'Type   : ', 0
+
+user_secperm_mode db \
+    'Mode   : ', 0
+
+user_secperm_owner db \
+    'Owner  : ', 0
+
+user_secperm_group db \
+    'Group  : ', 0
+
+user_secperm_flags db \
+    'Flags  : ', 0
+
+
+
+; =========================================================
+; secperm-local user-space helpers
+; =========================================================
+
+user_secperm_get_pc:
+
+    call user_secperm_pc_here
+
+user_secperm_pc_here:
+
+    pop esi
+    ret
+
+
+user_secperm_print_string:
+
+user_secperm_print_string_loop:
+
+    lodsb
+
+    test al, al
+    jz user_secperm_print_string_done
+
+    mov ah, 0x07
+    stosw
+
+    jmp user_secperm_print_string_loop
+
+
+user_secperm_print_string_done:
+
+    ret
+
+
+user_secperm_print_uint32:
+
+    push ebx
+    push ecx
+    push edx
+
+    test eax, eax
+    jnz user_secperm_print_uint32_convert
+
+    mov al, '0'
+    mov ah, 0x07
+    stosw
+    jmp user_secperm_print_uint32_done
+
+
+user_secperm_print_uint32_convert:
+
+    xor ecx, ecx
+    mov ebx, 10
+
+
+user_secperm_print_uint32_divide:
+
+    xor edx, edx
+    div ebx
+
+    add dl, '0'
+
+    push edx
+    inc ecx
+
+    test eax, eax
+    jnz user_secperm_print_uint32_divide
+
+
+user_secperm_print_uint32_write:
+
+    pop edx
+
+    mov al, dl
+    mov ah, 0x07
+    stosw
+
+    loop user_secperm_print_uint32_write
+
+
+user_secperm_print_uint32_done:
+
+    pop edx
+    pop ecx
+    pop ebx
+
+    ret
+
+
+user_secperm_code_end:
 
 user_secaudit_code_start:
 

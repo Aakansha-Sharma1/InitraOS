@@ -33,6 +33,8 @@ extern unsigned char user_secaudit_code_start[];
 extern unsigned char user_secaudit_code_end[];
 extern unsigned char user_secinfo_code_start[];
 extern unsigned char user_secinfo_code_end[];
+extern unsigned char user_secperm_code_start[];
+extern unsigned char user_secperm_code_end[];
 extern void enable_long_mode(void);
 
 static void paging_init(void);
@@ -71,6 +73,7 @@ static void initrafs_instance_test(void);
 static void initrafs_vfs_test(void);
 static void initrafs_vfs_rmdir_test(void);
 static void vfs_test(void);
+static int shell_filesystem_init(void);
 static void security_core_test(void);
 static void security_audit_syscall_test(void);
 static void security_audit_filter_api_test(void);
@@ -2879,6 +2882,52 @@ static int user_secinfo_prepare(
     return 1;
 }
 
+static int user_secperm_prepare(
+    unsigned int *entry_point
+)
+{
+    unsigned int image_start =
+        (unsigned int)user_secperm_code_start;
+
+    unsigned int image_end =
+        (unsigned int)user_secperm_code_end;
+
+    unsigned int image_size =
+        image_end - image_start;
+
+    if (entry_point == 0 ||
+        image_size == 0)
+    {
+        return 0;
+    }
+
+    if (!user_program_load(
+            (const unsigned char *)image_start,
+            image_size,
+            entry_point
+        ))
+    {
+        return 0;
+    }
+
+    /*
+     * Clear the complete user stack before launching
+     * the filesystem security utility.
+     */
+    volatile unsigned char *user_stack =
+        (volatile unsigned char *)
+        user_stack_region.base;
+
+    for (unsigned int i = 0;
+         i < user_stack_region.size;
+         i++)
+    {
+        user_stack[i] = 0;
+    }
+
+    return 1;
+}
+
 static int user_secaudit_prepare(
     unsigned int *entry_point
 )
@@ -3570,6 +3619,7 @@ static int shift_pressed = 0;
  */
 static volatile int shell_secaudit_requested = 0;
 static volatile int shell_secinfo_requested = 0;
+static volatile int shell_secperm_requested = 0;
 
 static volatile unsigned int
     shell_secaudit_filter_type =
@@ -3803,6 +3853,147 @@ shell_secinfo_done:
 
     shell_prompt();
 }
+
+static void shell_run_secperm(void)
+{
+    /*
+     * Clear previous utility output before launching
+     * the Ring 3 filesystem security utility.
+     */
+    clear_screen();
+
+    unsigned int user_entry_point = 0;
+    task_t *user_task = 0;
+
+    if (!user_secperm_prepare(
+            &user_entry_point
+        ))
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secperm: user image prepare failed"
+        );
+
+        goto shell_secperm_done;
+    }
+
+    user_task =
+        task_create_user(
+            0,
+            user_entry_point
+        );
+
+    if (user_task == 0 ||
+        user_task->context == 0)
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secperm: user task create failed"
+        );
+
+        goto shell_secperm_done;
+    }
+
+    task_set_state(
+        user_task,
+        TASK_READY
+    );
+
+    current_task =
+        user_task;
+
+    task_set_state(
+        user_task,
+        TASK_RUNNING
+    );
+
+    /*
+     * Enter the Ring 3 secperm program.
+     */
+    task_switch(
+        &kernel_context,
+        user_task->context
+    );
+
+    /*
+     * Returning here means SYSCALL_EXIT switched
+     * back to the shell's kernel context.
+     */
+    if (user_task->state ==
+            TASK_FINISHED &&
+        current_task ==
+            user_task)
+    {
+        if (*(volatile unsigned int *)
+                (USER_STACK_BASE + 0x1A4U) ==
+            0x5343504DU)
+        {
+            c_serial_print(
+                "[InitraOS] SECPERM_USER_OK\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secperm: security metadata read completed"
+            );
+        }
+        else
+        {
+            c_serial_print(
+                "[InitraOS] SECPERM_USER_FAIL\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secperm: security metadata read failed"
+            );
+        }
+    }
+    else
+    {
+        c_serial_print(
+            "[InitraOS] SECPERM_USER_FAIL\n"
+        );
+
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secperm: user task exit failed"
+        );
+    }
+
+    current_task = 0;
+
+    task_destroy(
+        user_task
+    );
+
+shell_secperm_done:
+
+    keyboard_index = 0;
+
+    if (keyboard_row >= 25)
+    {
+        keyboard_row = 13;
+    }
+
+    shell_prompt();
+}
+
 
 static void shell_run_secaudit(
     unsigned int filter_type,
@@ -4065,6 +4256,14 @@ static void shell_execute(void)
 
         keyboard_row++;
 
+        print_at(
+            keyboard_row,
+            0,
+            "secperm"
+        );
+
+        keyboard_row++;
+
     }
     else if (command_equals("about"))
     {
@@ -4082,6 +4281,15 @@ static void shell_execute(void)
     else if (command_equals("secinfo"))
     {
         shell_secinfo_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
+    }
+
+    else if (command_equals("secperm"))
+    {
+        shell_secperm_requested = 1;
 
         keyboard_index = 0;
 
@@ -5414,6 +5622,17 @@ static unsigned char initrafs_test_file_disk[
     INITRAFS_BLOCK_SIZE
 ];
 
+/*
+ * Persistent filesystem used by the interactive shell.
+ *
+ * This state must remain alive for as long as shell commands
+ * access the VFS.
+ */
+static initrafs_instance_t shell_filesystem_instance;
+static filesystem_t shell_filesystem;
+static block_device_t shell_filesystem_device;
+static unsigned int shell_filesystem_mounted = 0;
+
 static int initrafs_test_disk_read(
     block_device_t *device,
     unsigned int block,
@@ -6341,6 +6560,71 @@ c_serial_print(
     c_serial_print(
         "[InitraOS] INITRAFS_DIRECTORY_REMOVE_OK\n"
     );
+}
+
+static int shell_filesystem_init(void)
+{
+    /*
+     * Start the interactive shell with deterministic
+     * in-memory InitraFS storage.
+     */
+    for (unsigned int index = 0;
+         index < sizeof(initrafs_test_file_disk);
+         index++)
+    {
+        initrafs_test_file_disk[index] = 0;
+    }
+
+    shell_filesystem_device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    shell_filesystem_device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    shell_filesystem_device.read =
+        initrafs_test_disk_read;
+
+    shell_filesystem_device.write =
+        initrafs_test_disk_write;
+
+    shell_filesystem_device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_vfs_init(
+            &shell_filesystem,
+            &shell_filesystem_instance))
+    {
+        return 0;
+    }
+
+    if (!filesystem_register(
+            &shell_filesystem))
+    {
+        return 0;
+    }
+
+    if (!vfs_mount(
+            &shell_filesystem,
+            &shell_filesystem_device))
+    {
+        filesystem_unregister(
+            &shell_filesystem
+        );
+
+        return 0;
+    }
+
+    shell_filesystem_mounted = 1;
+
+    /*
+     * Interactive shell starts with kernel/root identity.
+     */
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
+
+    return 1;
 }
 
 static void vfs_test(void)
@@ -8105,6 +8389,29 @@ task_t *next_task =
      */
     current_task = 0;
 
+    /*
+     * Keep a filesystem mounted for interactive VFS/security
+     * commands such as secperm.
+     */
+    if (!shell_filesystem_init())
+    {
+        c_serial_print(
+            "[InitraOS] SHELL_FILESYSTEM_FAIL\n"
+        );
+
+        print_at(
+            13,
+            0,
+            "SHELL FILESYSTEM INIT FAILED"
+        );
+    }
+    else
+    {
+        c_serial_print(
+            "[InitraOS] SHELL_FILESYSTEM_OK\n"
+        );
+    }
+
     keyboard_index = 0;
     keyboard_row = 13;
 
@@ -8122,6 +8429,13 @@ task_t *next_task =
             shell_secinfo_requested = 0;
 
             shell_run_secinfo();
+        }
+
+        if (shell_secperm_requested)
+        {
+            shell_secperm_requested = 0;
+
+            shell_run_secperm();
         }
 
         if (shell_secaudit_requested)
