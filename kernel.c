@@ -77,6 +77,7 @@ static void security_audit_filter_api_test(void);
 static void security_status_api_test(void);
 static void security_resource_access_test(void);
 
+static void security_fs_info_syscall_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -6755,6 +6756,173 @@ fail:
     );
 }
 
+static void security_fs_info_syscall_test(void)
+{
+    initrafs_instance_t instance;
+    filesystem_t filesystem;
+    block_device_t device;
+
+    vfs_security_info_t *info =
+        (vfs_security_info_t *)USER_STACK_BASE;
+
+    volatile char *path =
+        (volatile char *)(USER_STACK_BASE + 0x100U);
+
+    unsigned int registered = 0;
+    unsigned int mounted = 0;
+
+    device.block_size =
+        INITRAFS_BLOCK_SIZE;
+
+    device.block_count =
+        INITRAFS_TEST_FILE_DISK_BLOCKS;
+
+    device.read =
+        initrafs_test_disk_read;
+
+    device.write =
+        initrafs_test_disk_write;
+
+    device.private_data =
+        initrafs_test_file_disk;
+
+    if (!initrafs_vfs_init(
+            &filesystem,
+            &instance) ||
+        !filesystem_register(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    registered = 1;
+
+    if (!vfs_mount(
+            &filesystem,
+            &device))
+    {
+        goto fail;
+    }
+
+    mounted = 1;
+
+    /*
+     * Use the root directory because it already exists
+     * in every freshly initialized InitraFS instance.
+     */
+    const char root_path[] = "/";
+
+    for (unsigned int index = 0;
+         index < sizeof(root_path);
+         index++)
+    {
+        path[index] =
+            root_path[index];
+    }
+
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_FS_INFO,
+            (unsigned int)path,
+            (unsigned int)info,
+            0, 0, 0
+        ) != SECURITY_ALLOWED)
+    {
+        goto fail;
+    }
+
+    if (info->inode_number !=
+            INITRAFS_ROOT_INODE ||
+        info->type !=
+            INODE_TYPE_DIRECTORY ||
+        info->mode !=
+            INITRAFS_ROOT_MODE ||
+        info->owner != 0U ||
+        info->group != 0U)
+    {
+        goto fail;
+    }
+
+    /*
+     * A kernel address must never be accepted as the
+     * user-space metadata destination.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_FS_INFO,
+            (unsigned int)path,
+            KERNEL_TEST_ADDRESS,
+            0, 0, 0
+        ) != SECURITY_DENIED)
+    {
+        goto fail;
+    }
+
+    /*
+     * A kernel address must also never be accepted as
+     * the user-space pathname.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_FS_INFO,
+            KERNEL_TEST_ADDRESS,
+            (unsigned int)info,
+            0, 0, 0
+        ) != SECURITY_DENIED)
+    {
+        goto fail;
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_FS_INFO_API_OK\n"
+    );
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
+
+    if (!vfs_unmount(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    mounted = 0;
+
+    if (!filesystem_unregister(
+            &filesystem))
+    {
+        goto fail;
+    }
+
+    registered = 0;
+
+    return;
+
+fail:
+
+    vfs_set_caller_identity(
+        0U,
+        0U
+    );
+
+    if (mounted)
+    {
+        vfs_unmount(
+            &filesystem
+        );
+    }
+
+    if (registered)
+    {
+        filesystem_unregister(
+            &filesystem
+        );
+    }
+
+    c_serial_print(
+        "[InitraOS] SECURITY_FS_INFO_API_FAIL\n"
+    );
+}
+
 static void initrafs_vfs_directory_test(void)
 {
     initrafs_instance_t instance;
@@ -7829,6 +7997,7 @@ task_t *next_task =
     initrafs_vfs_directory_test();
     initrafs_vfs_rmdir_test();
     initrafs_vfs_test();
+    security_fs_info_syscall_test();
     vfs_test();
 
     /*
@@ -8170,6 +8339,72 @@ static int security_user_buffer_valid(
     return 1;
 }
 
+static int security_user_string_valid(
+    unsigned int address
+)
+{
+    unsigned int directory_index;
+    unsigned int table_index;
+    unsigned int entry;
+
+    /*
+     * The current user-space design provides one user stack
+     * page. The string must remain entirely inside it.
+     */
+    if (address < USER_STACK_BASE ||
+        address >= USER_STACK_TOP)
+    {
+        return 0;
+    }
+
+    directory_index =
+        (address >> 22) & 0x3FF;
+
+    table_index =
+        (address >> 12) & 0x3FF;
+
+    if (directory_index >=
+            kernel_address_space.page_table_count)
+    {
+        return 0;
+    }
+
+    entry =
+        kernel_address_space.page_tables[
+            directory_index
+        ][
+            table_index
+        ];
+
+    /*
+     * A pathname is read by the kernel, so it only needs
+     * to be present and user-accessible.
+     */
+    if ((entry &
+         (PAGE_PRESENT | PAGE_USER)) !=
+        (PAGE_PRESENT | PAGE_USER))
+    {
+        return 0;
+    }
+
+    /*
+     * Require a terminating NUL before the end of the
+     * user stack page.
+     */
+    for (unsigned int offset = 0;
+         address + offset < USER_STACK_TOP;
+         offset++)
+    {
+        if (*(volatile unsigned char *)
+                (address + offset) == 0)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 unsigned int syscall_dispatcher(
     unsigned int syscall_number,
     unsigned int arg1,
@@ -8319,6 +8554,40 @@ case SYSCALL_GETPID:
              * The kernel owns the authoritative capability mask.
              */
             return security_status();
+
+        case SYSCALL_SECURITY_FS_INFO:
+        {
+            vfs_security_info_t *destination =
+                (vfs_security_info_t *)arg2;
+
+            /*
+             * EBX / arg1 = user-space path
+             * ECX / arg2 = user-space metadata destination
+             */
+            if (!security_user_string_valid(
+                    arg1))
+            {
+                return SECURITY_DENIED;
+            }
+
+            if (!security_user_buffer_valid(
+                    arg2,
+                    sizeof(vfs_security_info_t)
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            if (!vfs_get_security_info(
+                    (const char *)arg1,
+                    destination
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            return SECURITY_ALLOWED;
+        }
 
         default:
             /*

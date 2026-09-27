@@ -104,6 +104,7 @@ EXPECTED = [
     "[InitraOS] INITRAFS_VFS_RMDIR_OK",
     "[InitraOS] INITRAFS_PERMISSION_ENFORCEMENT_OK",
     "[InitraOS] INITRAFS_VFS_OK",
+    "[InitraOS] SECURITY_FS_INFO_API_OK",
     "[InitraOS] VFS_IDENTITY_OK",
     "[InitraOS] VFS_OK",
     "[InitraOS] USER_PROGRAM_EXIT_OK",
