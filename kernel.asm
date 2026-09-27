@@ -37,6 +37,8 @@ global user_secaudit_code_start
 global user_secaudit_code_end
 global user_secinfo_code_start
 global user_secinfo_code_end
+global user_secusers_code_start
+global user_secusers_code_end
 global user_secperm_code_start
 global user_secperm_code_end
 global enable_long_mode
@@ -800,6 +802,250 @@ user_secinfo_code_end:
 ; The utility accesses the filesystem only through
 ; SYSCALL_SECURITY_FS_INFO (11).
 ; =========================================================
+
+; =========================================================
+; Native Ring 3 security identity utility.
+;
+;     secusers
+;
+; First increment:
+;   Display the identity of the currently running process.
+;
+; The utility obtains PID, UID, GID, and privilege through
+; SYSCALL_SECURITY_IDENTITY (12).
+; =========================================================
+
+user_secusers_code_start:
+
+    ; InitraOS native user program header.
+    dd 0x49504F53
+    dd 1
+    dd 0
+    dd user_secusers_code_end - user_secusers_entry
+    dd 0
+    dd 0
+
+user_secusers_entry:
+
+    ; -----------------------------------------------------
+    ; Request current process identity.
+    ;
+    ; EBX = user-space identity destination
+    ; EAX = SYSCALL_SECURITY_IDENTITY (12)
+    ; -----------------------------------------------------
+
+    mov ebx, 0x007FF100
+    mov eax, 12
+    int 0x80
+
+    cmp eax, 1
+    jne user_secusers_fail
+
+    ; -----------------------------------------------------
+    ; Display title.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8A00
+
+    call user_secusers_get_pc
+    add esi, user_secusers_banner - user_secusers_pc_here
+    call user_secusers_print_string
+
+    ; -----------------------------------------------------
+    ; PID.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8AA0
+
+    call user_secusers_get_pc
+    add esi, user_secusers_pid - user_secusers_pc_here
+    call user_secusers_print_string
+
+    mov eax, [0x007FF100]
+    call user_secusers_print_uint32
+
+    ; -----------------------------------------------------
+    ; UID.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8B40
+
+    call user_secusers_get_pc
+    add esi, user_secusers_uid - user_secusers_pc_here
+    call user_secusers_print_string
+
+    mov eax, [0x007FF104]
+    call user_secusers_print_uint32
+
+    ; -----------------------------------------------------
+    ; GID.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8BE0
+
+    call user_secusers_get_pc
+    add esi, user_secusers_gid - user_secusers_pc_here
+    call user_secusers_print_string
+
+    mov eax, [0x007FF108]
+    call user_secusers_print_uint32
+
+    ; -----------------------------------------------------
+    ; Privilege.
+    ; -----------------------------------------------------
+
+    mov edi, 0xB8C80
+
+    call user_secusers_get_pc
+    add esi, user_secusers_privilege - user_secusers_pc_here
+    call user_secusers_print_string
+
+    mov eax, [0x007FF10C]
+
+    cmp eax, 0
+    je user_secusers_print_kernel
+
+    call user_secusers_get_pc
+    add esi, user_secusers_user - user_secusers_pc_here
+    call user_secusers_print_string
+    jmp user_secusers_success
+
+user_secusers_print_kernel:
+
+    call user_secusers_get_pc
+    add esi, user_secusers_kernel - user_secusers_pc_here
+    call user_secusers_print_string
+
+user_secusers_success:
+
+    ; Signal successful Ring 3 execution to the kernel.
+    mov dword [0x007FF1A4], 0x53435553
+
+    ; Exit through the controlled syscall path.
+    mov eax, 0
+    int 0x80
+
+user_secusers_fail:
+
+    jmp user_secusers_fail
+
+
+; =========================================================
+; secusers strings
+; =========================================================
+
+user_secusers_banner db \
+    'SECUSERS -- IDENTITY', 0
+
+user_secusers_pid db \
+    'PID      : ', 0
+
+user_secusers_uid db \
+    'UID      : ', 0
+
+user_secusers_gid db \
+    'GID      : ', 0
+
+user_secusers_privilege db \
+    'Privilege: ', 0
+
+user_secusers_user db \
+    'USER', 0
+
+user_secusers_kernel db \
+    'KERNEL', 0
+
+
+; =========================================================
+; secusers-local user-space helpers
+; =========================================================
+
+user_secusers_get_pc:
+
+    call user_secusers_pc_here
+
+user_secusers_pc_here:
+
+    pop esi
+    ret
+
+
+user_secusers_print_string:
+
+user_secusers_print_string_loop:
+
+    lodsb
+
+    test al, al
+    jz user_secusers_print_string_done
+
+    mov ah, 0x07
+    stosw
+
+    jmp user_secusers_print_string_loop
+
+user_secusers_print_string_done:
+
+    ret
+
+
+user_secusers_print_uint32:
+
+    push ebx
+    push ecx
+    push edx
+
+    test eax, eax
+    jnz user_secusers_print_uint32_convert
+
+    mov al, '0'
+    mov ah, 0x07
+    stosw
+
+    jmp user_secusers_print_uint32_done
+
+
+user_secusers_print_uint32_convert:
+
+    xor ecx, ecx
+    mov ebx, 10
+
+
+user_secusers_print_uint32_divide:
+
+    xor edx, edx
+    div ebx
+
+    add dl, '0'
+
+    push edx
+    inc ecx
+
+    test eax, eax
+    jnz user_secusers_print_uint32_divide
+
+
+user_secusers_print_uint32_write:
+
+    pop edx
+
+    mov al, dl
+    mov ah, 0x07
+    stosw
+
+    loop user_secusers_print_uint32_write
+
+
+user_secusers_print_uint32_done:
+
+    pop edx
+    pop ecx
+    pop ebx
+
+    ret
+
+
+user_secusers_code_end:
 
 user_secperm_code_start:
 

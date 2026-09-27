@@ -33,6 +33,8 @@ extern unsigned char user_secaudit_code_start[];
 extern unsigned char user_secaudit_code_end[];
 extern unsigned char user_secinfo_code_start[];
 extern unsigned char user_secinfo_code_end[];
+extern unsigned char user_secusers_code_start[];
+extern unsigned char user_secusers_code_end[];
 extern unsigned char user_secperm_code_start[];
 extern unsigned char user_secperm_code_end[];
 extern void enable_long_mode(void);
@@ -2883,6 +2885,52 @@ static int user_secinfo_prepare(
     return 1;
 }
 
+static int user_secusers_prepare(
+    unsigned int *entry_point
+)
+{
+    unsigned int image_start =
+        (unsigned int)user_secusers_code_start;
+
+    unsigned int image_end =
+        (unsigned int)user_secusers_code_end;
+
+    unsigned int image_size =
+        image_end - image_start;
+
+    if (entry_point == 0 ||
+        image_size == 0)
+    {
+        return 0;
+    }
+
+    if (!user_program_load(
+            (const unsigned char *)image_start,
+            image_size,
+            entry_point
+        ))
+    {
+        return 0;
+    }
+
+    /*
+     * Clear the complete user stack before launching
+     * the security identity utility.
+     */
+    volatile unsigned char *user_stack =
+        (volatile unsigned char *)
+        user_stack_region.base;
+
+    for (unsigned int i = 0;
+         i < user_stack_region.size;
+         i++)
+    {
+        user_stack[i] = 0;
+    }
+
+    return 1;
+}
+
 static int user_secperm_prepare(
     unsigned int *entry_point
 )
@@ -3620,6 +3668,7 @@ static int shift_pressed = 0;
  */
 static volatile int shell_secaudit_requested = 0;
 static volatile int shell_secinfo_requested = 0;
+static volatile int shell_secusers_requested = 0;
 static volatile int shell_secperm_requested = 0;
 
 static volatile unsigned int
@@ -3844,6 +3893,190 @@ static void shell_run_secinfo(void)
     );
 
 shell_secinfo_done:
+
+    keyboard_index = 0;
+
+    if (keyboard_row >= 25)
+    {
+        keyboard_row = 13;
+    }
+
+    shell_prompt();
+}
+
+static void shell_run_secusers(void)
+{
+    /*
+     * Clear previous utility output before launching
+     * the Ring 3 identity utility.
+     */
+    clear_screen();
+
+    unsigned int user_entry_point = 0;
+    task_t *user_task = 0;
+
+    /*
+     * Native security utilities need an authoritative
+     * process identity for syscall 12, but they do not
+     * require a separate user address space in the
+     * current task-switch architecture.
+     *
+     * Keep a lightweight process identity descriptor
+     * alive for the entire utility execution.
+     */
+    process_t identity_process = {0};
+
+    if (!user_secusers_prepare(
+            &user_entry_point
+        ))
+    {
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secusers: user image prepare failed"
+        );
+
+        goto shell_secusers_done;
+    }
+
+    identity_process.pid =
+        next_process_id++;
+
+    identity_process.state =
+        TASK_READY;
+
+    identity_process.privilege =
+        TASK_USER;
+
+    identity_process.uid =
+        INITRAOS_DEFAULT_UID;
+
+    identity_process.gid =
+        INITRAOS_DEFAULT_GID;
+
+    identity_process.address_space =
+        0;
+
+    identity_process.task =
+        0;
+
+    user_task =
+        task_create_user(
+            &identity_process,
+            user_entry_point
+        );
+
+    if (user_task == 0 ||
+        user_task->context == 0)
+    {
+        c_serial_print(
+            "[InitraOS] SECUSERS_FAIL_TASK_ALLOC\n"
+        );
+
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secusers: task allocation failed"
+        );
+
+        if (user_task != 0)
+        {
+            task_destroy(user_task);
+        }
+
+        goto shell_secusers_done;
+    }
+
+    identity_process.task =
+        user_task;
+
+    task_set_state(
+        user_task,
+        TASK_READY
+    );
+
+    current_task =
+        user_task;
+
+    task_set_state(
+        user_task,
+        TASK_RUNNING
+    );
+
+    /*
+     * Enter the Ring 3 secusers program.
+     */
+    task_switch(
+        &kernel_context,
+        user_task->context
+    );
+
+    /*
+     * Returning here means SYSCALL_EXIT switched
+     * back to the shell's kernel context.
+     */
+    if (user_task->state ==
+            TASK_FINISHED &&
+        current_task ==
+            user_task)
+    {
+        if (*(volatile unsigned int *)
+                (USER_STACK_BASE + 0x1A4U) ==
+            0x53435553U)
+        {
+            c_serial_print(
+                "[InitraOS] SECUSERS_USER_OK\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secusers: identity read successful"
+            );
+        }
+        else
+        {
+            c_serial_print(
+                "[InitraOS] SECUSERS_USER_FAIL\n"
+            );
+
+            keyboard_row++;
+
+            print_at(
+                keyboard_row,
+                0,
+                "secusers: identity read failed"
+            );
+        }
+    }
+    else
+    {
+        c_serial_print(
+            "[InitraOS] SECUSERS_USER_FAIL\n"
+        );
+
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
+            "secusers: user task exit failed"
+        );
+    }
+
+    current_task = 0;
+
+    task_destroy(
+        user_task
+    );
+
+shell_secusers_done:
 
     keyboard_index = 0;
 
@@ -4260,6 +4493,14 @@ static void shell_execute(void)
         print_at(
             keyboard_row,
             0,
+            "secusers"
+        );
+
+        keyboard_row++;
+
+        print_at(
+            keyboard_row,
+            0,
             "secperm"
         );
 
@@ -4282,6 +4523,15 @@ static void shell_execute(void)
     else if (command_equals("secinfo"))
     {
         shell_secinfo_requested = 1;
+
+        keyboard_index = 0;
+
+        return;
+    }
+
+    else if (command_equals("secusers"))
+    {
+        shell_secusers_requested = 1;
 
         keyboard_index = 0;
 
@@ -7770,7 +8020,7 @@ static void security_identity_syscall_test(void)
         }
 
         c_serial_print(
-            "[InitraOS] SECURITY_IDENTITY_API_FAIL_CREATE\\n"
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL_CREATE\n"
         );
 
         return;
@@ -7803,7 +8053,7 @@ static void security_identity_syscall_test(void)
         process_destroy(process);
 
         c_serial_print(
-            "[InitraOS] SECURITY_IDENTITY_API_FAIL\\n"
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL\n"
         );
 
         return;
@@ -7828,7 +8078,7 @@ static void security_identity_syscall_test(void)
         process_destroy(process);
 
         c_serial_print(
-            "[InitraOS] SECURITY_IDENTITY_API_FAIL_POINTER\\n"
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL_POINTER\n"
         );
 
         return;
@@ -7840,7 +8090,7 @@ static void security_identity_syscall_test(void)
     process_destroy(process);
 
     c_serial_print(
-        "[InitraOS] SECURITY_IDENTITY_API_OK\\n"
+        "[InitraOS] SECURITY_IDENTITY_API_OK\n"
     );
 }
 
@@ -8525,6 +8775,13 @@ task_t *next_task =
             shell_secinfo_requested = 0;
 
             shell_run_secinfo();
+        }
+
+        if (shell_secusers_requested)
+        {
+            shell_secusers_requested = 0;
+
+            shell_run_secusers();
         }
 
         if (shell_secperm_requested)
