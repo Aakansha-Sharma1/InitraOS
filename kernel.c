@@ -81,6 +81,7 @@ static void security_status_api_test(void);
 static void security_resource_access_test(void);
 
 static void security_fs_info_syscall_test(void);
+static void security_identity_syscall_test(void);
 
 static int page_map(
     unsigned int virtual_address,
@@ -7749,6 +7750,100 @@ static void security_audit_filter_api_test(void)
     );
 }
 
+static void security_identity_syscall_test(void)
+{
+    process_t *process =
+        process_create();
+
+    task_t *previous_task =
+        current_task;
+
+    security_identity_info_t *info =
+        (security_identity_info_t *)USER_STACK_BASE;
+
+    if (process == 0 ||
+        process->task == 0)
+    {
+        if (process != 0)
+        {
+            process_destroy(process);
+        }
+
+        c_serial_print(
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL_CREATE\\n"
+        );
+
+        return;
+    }
+
+    current_task =
+        process->task;
+
+    task_set_state(
+        current_task,
+        TASK_RUNNING
+    );
+
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_IDENTITY,
+            (unsigned int)info,
+            0,
+            0,
+            0,
+            0
+        ) != SECURITY_ALLOWED ||
+        info->pid != process->pid ||
+        info->uid != process->uid ||
+        info->gid != process->gid ||
+        info->privilege != process->privilege)
+    {
+        current_task =
+            previous_task;
+
+        process_destroy(process);
+
+        c_serial_print(
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL\\n"
+        );
+
+        return;
+    }
+
+    /*
+     * Kernel memory must never be accepted as the
+     * user-space identity destination.
+     */
+    if (syscall_dispatcher(
+            SYSCALL_SECURITY_IDENTITY,
+            KERNEL_TEST_ADDRESS,
+            0,
+            0,
+            0,
+            0
+        ) != SECURITY_DENIED)
+    {
+        current_task =
+            previous_task;
+
+        process_destroy(process);
+
+        c_serial_print(
+            "[InitraOS] SECURITY_IDENTITY_API_FAIL_POINTER\\n"
+        );
+
+        return;
+    }
+
+    current_task =
+        previous_task;
+
+    process_destroy(process);
+
+    c_serial_print(
+        "[InitraOS] SECURITY_IDENTITY_API_OK\\n"
+    );
+}
+
 static void security_status_api_test(void)
 {
     unsigned int status =
@@ -8256,6 +8351,7 @@ task_t *next_task =
     process_task_link_test();
     syscall_dispatcher_test();
     syscall_memory_test();
+    security_identity_syscall_test();
     security_core_test();
     security_audit_syscall_test();
     security_audit_filter_api_test();
@@ -8868,6 +8964,47 @@ case SYSCALL_GETPID:
              * The kernel owns the authoritative capability mask.
              */
             return security_status();
+
+        case SYSCALL_SECURITY_IDENTITY:
+        {
+            security_identity_info_t *destination =
+                (security_identity_info_t *)arg1;
+
+            /*
+             * EBX / arg1 = user-space identity destination.
+             */
+            if (!security_user_buffer_valid(
+                    arg1,
+                    sizeof(security_identity_info_t)
+                ))
+            {
+                return SECURITY_DENIED;
+            }
+
+            /*
+             * Identity must come from a process-backed
+             * running task.
+             */
+            if (current_task == 0 ||
+                current_task->process == 0)
+            {
+                return SECURITY_DENIED;
+            }
+
+            destination->pid =
+                current_task->process->pid;
+
+            destination->uid =
+                current_task->process->uid;
+
+            destination->gid =
+                current_task->process->gid;
+
+            destination->privilege =
+                current_task->process->privilege;
+
+            return SECURITY_ALLOWED;
+        }
 
         case SYSCALL_SECURITY_FS_INFO:
         {

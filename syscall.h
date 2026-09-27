@@ -32,5 +32,6 @@
 #define SYSCALL_SECURITY_STATUS              9
 #define SYSCALL_SECURITY_AUDIT_FILTER_READ  10
 #define SYSCALL_SECURITY_FS_INFO            11
+#define SYSCALL_SECURITY_IDENTITY           12
 
 #endif

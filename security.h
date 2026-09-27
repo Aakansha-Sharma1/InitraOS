@@ -44,6 +44,14 @@
 
 #define SECURITY_STATUS_MASK                  0x3FU
 
+typedef struct security_identity_info
+{
+    unsigned int pid;
+    unsigned int uid;
+    unsigned int gid;
+    unsigned int privilege;
+} security_identity_info_t;
+
 typedef struct security_audit_event
 {
     unsigned int sequence;
